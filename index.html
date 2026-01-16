@@ -8,6 +8,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.3.2/pixi.min.js"></script>
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #000; }
+        .noselect { -webkit-user-select: none; user-select: none; }
         canvas { display: block; }
         /* Scrollbar customization for the UI panel */
         ::-webkit-scrollbar { width: 6px; }
@@ -16,7 +17,7 @@
         ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.4); }
     </style>
 </head>
-<body class="text-white font-sans antialiased">
+<body class="text-white font-sans antialiased noselect">
     <!-- PixiJS Container -->
     <div id="canvas-container" class="absolute inset-0 z-0"></div>
 
@@ -92,6 +93,9 @@
                         <button class="w-6 h-6 rounded-full bg-gradient-to-br from-red-500 to-yellow-500 ring-1 ring-white/20 hover:scale-110 transition" onclick="app.setPalette('fire')"></button>
                         <button class="w-6 h-6 rounded-full bg-gradient-to-br from-green-400 to-teal-600 ring-1 ring-white/20 hover:scale-110 transition" onclick="app.setPalette('forest')"></button>
                         <button class="w-6 h-6 rounded-full bg-gradient-to-br from-gray-200 to-gray-800 ring-1 ring-white/20 hover:scale-110 transition" onclick="app.setPalette('bw')"></button>
+                        <button class="w-6 h-6 rounded-full bg-gradient-to-br from-blue-700 to-cyan-400 ring-1 ring-white/20 hover:scale-110 transition" onclick="app.setPalette('ocean')"></button>
+                        <button class="w-6 h-6 rounded-full bg-gradient-to-br from-pink-500 to-cyan-500 ring-1 ring-white/20 hover:scale-110 transition" onclick="app.setPalette('neon')"></button>
+                        <button class="w-6 h-6 rounded-full bg-gradient-to-br from-purple-800 to-orange-400 ring-1 ring-white/20 hover:scale-110 transition" onclick="app.setPalette('sunset')"></button>
                     </div>
                 </div>
 
@@ -174,6 +178,12 @@
                     return vec3(0.0, t, t*0.5);
                 } else if (paletteId == 3) { // BW
                     return vec3(t);
+                } else if (paletteId == 4) { // Ocean
+                    return mix(vec3(0.0, 0.0, 0.2), vec3(0.0, 0.8, 1.0), t);
+                } else if (paletteId == 5) { // Neon
+                    return mix(vec3(1.0, 0.0, 1.0), vec3(0.0, 1.0, 1.0), t);
+                } else if (paletteId == 6) { // Sunset
+                    return mix(vec3(0.2, 0.1, 0.0), vec3(1.0, 0.5, 0.0), t);
                 }
                 // Default (Rainbow/Blue-Purple)
                 return hsv2rgb(vec3(0.6 + 0.4*t, 1.0, t));
@@ -501,6 +511,14 @@
                 g.endFill();
             }
 
+            getScaleFactor() {
+                // Returns world unit span for zooming/panning calculations
+                // Shaders (Mandelbrot, Julia, Newton) use ~3.0
+                // Barnsley uses ~10.0 (roughly -2.5 to 2.5 x, 0 to 10 y)
+                if (this.state.fractal === 'barnsley') return 10.0;
+                return 3.0;
+            }
+
             updateExportFrame() {
                 const frame = document.getElementById('export-frame');
                 if (!this.showExportFrame) {
@@ -544,7 +562,7 @@
                     const newPos = { x: e.global.x, y: e.global.y };
                     const dx = newPos.x - lastPos.x;
                     const dy = newPos.y - lastPos.y;
-                    const scale = 3.0 / (this.state.zoom * Math.min(this.app.screen.width, this.app.screen.height));
+                    const scale = this.getScaleFactor() / (this.state.zoom * Math.min(this.app.screen.width, this.app.screen.height));
 
                     this.state.center.x -= dx * scale;
                     this.state.center.y += dy * scale;
@@ -580,8 +598,8 @@
                     }
 
                     // Adjust center to keep mouse world position stationary
-                    // CenterNew = CenterOld + (UV) * (3.0/ZoomOld - 3.0/ZoomNew)
-                    const term = 3.0 * (1.0/oldZoom - 1.0/this.state.zoom);
+                    // CenterNew = CenterOld + (UV) * (Scale/ZoomOld - Scale/ZoomNew)
+                    const term = this.getScaleFactor() * (1.0/oldZoom - 1.0/this.state.zoom);
                     this.state.center.x += u * term;
                     this.state.center.y += v * term;
 
@@ -594,7 +612,7 @@
                 // Keyboard Panning
                 window.addEventListener('keydown', (e) => {
                     const minDim = Math.min(this.app.screen.width, this.app.screen.height);
-                    const scale = 3.0 / (this.state.zoom * minDim);
+                    const scale = this.getScaleFactor() / (this.state.zoom * minDim);
                     const stepPixels = 50; // Move 50 pixels worth
                     const moveStep = stepPixels * scale;
 
@@ -653,7 +671,7 @@
             }
 
             setPalette(name) {
-                const map = { 'default': 0, 'fire': 1, 'forest': 2, 'bw': 3 };
+                const map = { 'default': 0, 'fire': 1, 'forest': 2, 'bw': 3, 'ocean': 4, 'neon': 5, 'sunset': 6 };
                 this.state.palette = map[name] || 0;
                 this.updateUniforms();
             }
