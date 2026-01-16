@@ -193,7 +193,88 @@
             }
         `;
 
-        // Shader Code Definitions - Loops increased to 5000
+        // Double Precision Emulation Lib
+        const dsMath = `
+            // Double-Single Arithmetic (Emulated Double Precision)
+            // Based on standard DS algorithms for GLSL
+
+            vec2 ds_set(float a) { return vec2(a, 0.0); }
+
+            vec2 ds_add(vec2 dsa, vec2 dsb) {
+                vec2 dsc;
+                float t1, t2, e;
+                t1 = dsa.x + dsb.x;
+                e = t1 - dsa.x;
+                t2 = ((dsb.x - e) + (dsa.x - (t1 - e))) + dsa.y + dsb.y;
+                dsc.x = t1 + t2;
+                dsc.y = t2 - (dsc.x - t1);
+                return dsc;
+            }
+
+            vec2 ds_sub(vec2 dsa, vec2 dsb) {
+                vec2 dsc;
+                float t1, t2, e;
+                t1 = dsa.x - dsb.x;
+                e = t1 - dsa.x;
+                t2 = ((-dsb.x - e) + (dsa.x - (t1 - e))) + dsa.y - dsb.y;
+                dsc.x = t1 + t2;
+                dsc.y = t2 - (dsc.x - t1);
+                return dsc;
+            }
+
+            vec2 ds_mul(vec2 dsa, vec2 dsb) {
+                vec2 dsc;
+                float c11, c21, c2, e, t1, t2;
+                float a = dsa.x;
+                float b = dsb.x;
+
+                float cona = a * 4097.0;
+                float conb = b * 4097.0;
+                float a1 = cona - (cona - a);
+                float b1 = conb - (conb - b);
+                float a2 = a - a1;
+                float b2 = b - b1;
+
+                c11 = a * b;
+                c21 = a2 * b2 + (a2 * b1 + (a1 * b2 + (a1 * b1 - c11)));
+
+                c2 = dsa.x * dsb.y + dsa.y * dsb.x;
+
+                t1 = c11 + c2;
+                e = t1 - c11;
+                t2 = dsa.y * dsb.y + ((c2 - e) + (c11 - (t1 - e))) + c21;
+
+                dsc.x = t1 + t2;
+                dsc.y = t2 - (dsc.x - t1);
+                return dsc;
+            }
+
+            vec2 ds_sqr(vec2 dsa) {
+                vec2 dsc;
+                float c11, c21, c2, e, t1, t2;
+                float a = dsa.x;
+                float cona = a * 4097.0;
+                float a1 = cona - (cona - a);
+                float a2 = a - a1;
+
+                c11 = a * a;
+                c21 = a2 * a2 + (a2 * a1 + (a1 * a2 + (a1 * a1 - c11)));
+
+                c2 = 2.0 * dsa.x * dsa.y;
+
+                t1 = c11 + c2;
+                e = t1 - c11;
+                t2 = dsa.y * dsa.y + ((c2 - e) + (c11 - (t1 - e))) + c21;
+
+                dsc.x = t1 + t2;
+                dsc.y = t2 - (dsc.x - t1);
+                return dsc;
+            }
+        `;
+
+        // Shader Code Definitions
+
+        // 1. Mandelbrot (Normal and Deep)
         const mandelbrotFrag = `
             precision highp float;
             varying vec2 vTextureCoord;
@@ -232,6 +313,71 @@
             }
         `;
 
+        const mandelbrotFragDeep = `
+            precision highp float;
+            varying vec2 vTextureCoord;
+            uniform vec2 uResolution;
+            uniform vec2 uCenterRe; // High, Low
+            uniform vec2 uCenterIm; // High, Low
+            uniform float uScale; // 3.0 / Zoom
+            uniform int uMaxIter;
+            uniform int uPalette;
+
+            ` + shaderUtils + `
+            ` + dsMath + `
+
+            void main() {
+                vec2 uv = (gl_FragCoord.xy - uResolution.xy * 0.5) / min(uResolution.x, uResolution.y);
+
+                // Calculate C in Double Precision
+                // c_re = CenterRe + uv.x * scale
+                vec2 offsetRe = vec2(uv.x * uScale, 0.0);
+                vec2 c_re = ds_add(uCenterRe, offsetRe);
+
+                // c_im = CenterIm + uv.y * scale
+                vec2 offsetIm = vec2(uv.y * uScale, 0.0);
+                vec2 c_im = ds_add(uCenterIm, offsetIm);
+
+                vec2 z_re = vec2(0.0, 0.0);
+                vec2 z_im = vec2(0.0, 0.0);
+                int iter = 0;
+
+                for (int i = 0; i < 5000; i++) {
+                    if (i >= uMaxIter) break;
+
+                    // z_re_new = z_re^2 - z_im^2 + c_re
+                    vec2 z_re_sq = ds_sqr(z_re);
+                    vec2 z_im_sq = ds_sqr(z_im);
+                    vec2 term1 = ds_sub(z_re_sq, z_im_sq);
+                    vec2 z_re_new = ds_add(term1, c_re);
+
+                    // z_im_new = 2 * z_re * z_im + c_im
+                    vec2 term2 = ds_mul(z_re, z_im);
+                    // Multiply by 2.0 (simple add or mul)
+                    vec2 term2_2 = ds_add(term2, term2);
+                    vec2 z_im_new = ds_add(term2_2, c_im);
+
+                    // Check escape: z_re^2 + z_im^2 > 4.0
+                    vec2 mag = ds_add(z_re_sq, z_im_sq);
+                    if (mag.x > 4.0) break;
+
+                    z_re = z_re_new;
+                    z_im = z_im_new;
+                    iter++;
+                }
+
+                if (iter == uMaxIter) {
+                    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                } else {
+                    float t = float(iter) / float(uMaxIter);
+                    t = sqrt(t);
+                    vec3 col = getPaletteColor(t, uPalette);
+                    gl_FragColor = vec4(col, 1.0);
+                }
+            }
+        `;
+
+        // 2. Julia (Normal and Deep)
         const juliaFrag = `
             precision highp float;
             varying vec2 vTextureCoord;
@@ -240,7 +386,7 @@
             uniform float uZoom;
             uniform int uMaxIter;
             uniform int uPalette;
-            uniform vec2 uJuliaC; // Custom C for Julia
+            uniform vec2 uJuliaC;
 
             ` + shaderUtils + `
 
@@ -271,6 +417,66 @@
             }
         `;
 
+        const juliaFragDeep = `
+            precision highp float;
+            varying vec2 vTextureCoord;
+            uniform vec2 uResolution;
+            uniform vec2 uCenterRe;
+            uniform vec2 uCenterIm;
+            uniform float uScale;
+            uniform int uMaxIter;
+            uniform int uPalette;
+            uniform vec2 uJuliaCRe;
+            uniform vec2 uJuliaCIm;
+
+            ` + shaderUtils + `
+            ` + dsMath + `
+
+            void main() {
+                vec2 uv = (gl_FragCoord.xy - uResolution.xy * 0.5) / min(uResolution.x, uResolution.y);
+
+                // z = Center + uv * scale
+                vec2 z_re = ds_add(uCenterRe, vec2(uv.x * uScale, 0.0));
+                vec2 z_im = ds_add(uCenterIm, vec2(uv.y * uScale, 0.0));
+
+                // c is constant
+                vec2 c_re = uJuliaCRe;
+                vec2 c_im = uJuliaCIm;
+
+                int iter = 0;
+
+                for (int i = 0; i < 5000; i++) {
+                    if (i >= uMaxIter) break;
+
+                    vec2 z_re_sq = ds_sqr(z_re);
+                    vec2 z_im_sq = ds_sqr(z_im);
+                    vec2 term1 = ds_sub(z_re_sq, z_im_sq);
+                    vec2 z_re_new = ds_add(term1, c_re);
+
+                    vec2 term2 = ds_mul(z_re, z_im);
+                    vec2 term2_2 = ds_add(term2, term2);
+                    vec2 z_im_new = ds_add(term2_2, c_im);
+
+                    vec2 mag = ds_add(z_re_sq, z_im_sq);
+                    if (mag.x > 4.0) break;
+
+                    z_re = z_re_new;
+                    z_im = z_im_new;
+                    iter++;
+                }
+
+                if (iter == uMaxIter) {
+                    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                } else {
+                    float t = float(iter) / float(uMaxIter);
+                    t = sqrt(t);
+                    vec3 col = getPaletteColor(t, uPalette);
+                    gl_FragColor = vec4(col, 1.0);
+                }
+            }
+        `;
+
+        // 3. Newton (Standard only - Deep disabled for Newton to keep complexity manageable, falls back to Standard)
         const newtonFrag = `
             precision highp float;
             varying vec2 vTextureCoord;
@@ -282,12 +488,10 @@
 
             ` + shaderUtils + `
 
-            // Complex multiplication
             vec2 cmul(vec2 a, vec2 b) {
                 return vec2(a.x*b.x - a.y*b.y, a.x*b.y + a.y*b.x);
             }
 
-            // Complex division
             vec2 cdiv(vec2 a, vec2 b) {
                 float denom = b.x*b.x + b.y*b.y;
                 return vec2((a.x*b.x + a.y*b.y)/denom, (a.y*b.x - a.x*b.y)/denom);
@@ -303,7 +507,6 @@
                 roots[1] = vec2(-0.5, 0.866025);
                 roots[2] = vec2(-0.5, -0.866025);
 
-                float minDist = 100.0;
                 int rootIdx = -1;
 
                 for (int i = 0; i < 5000; i++) {
@@ -311,9 +514,7 @@
 
                     vec2 z2 = cmul(z, z);
                     vec2 z3 = cmul(z2, z);
-                    // Numerator: z^3 - 1
                     vec2 num = z3 - vec2(1.0, 0.0);
-                    // Denom: 3z^2
                     vec2 den = 3.0 * z2;
 
                     if (length(den) < 0.0001) break;
@@ -344,6 +545,7 @@
                 }
             }
         `;
+
 
         // --- Application Class ---
 
@@ -382,7 +584,7 @@
                 this.fractalContainer.addChild(this.fractalSprite);
                 this.app.stage.addChild(this.fractalContainer);
 
-                // Shader Uniforms
+                // Shader Uniforms (Normal)
                 this.uniforms = {
                     uResolution: [this.app.screen.width, this.app.screen.height],
                     uCenter: [this.state.center.x, this.state.center.y],
@@ -391,10 +593,25 @@
                     uPalette: this.state.palette
                 };
 
+                // Deep Zoom Uniforms (Placeholders)
+                this.uniformsDeep = {
+                    uResolution: [this.app.screen.width, this.app.screen.height],
+                    uCenterRe: [0, 0],
+                    uCenterIm: [0, 0],
+                    uScale: 1.0,
+                    uMaxIter: this.state.iterations,
+                    uPalette: this.state.palette
+                };
+
                 // Initialize Shaders
+                // Normal
                 this.mandelbrotFilter = new PIXI.Filter(vertexShader, mandelbrotFrag, this.uniforms);
                 this.juliaFilter = new PIXI.Filter(vertexShader, juliaFrag, { ...this.uniforms, uJuliaC: [this.state.juliaC.x, this.state.juliaC.y] });
                 this.newtonFilter = new PIXI.Filter(vertexShader, newtonFrag, this.uniforms);
+
+                // Deep
+                this.mandelbrotFilterDeep = new PIXI.Filter(vertexShader, mandelbrotFragDeep, this.uniformsDeep);
+                this.juliaFilterDeep = new PIXI.Filter(vertexShader, juliaFragDeep, { ...this.uniformsDeep, uJuliaCRe: [0,0], uJuliaCIm: [0,0] });
 
                 // Barnsley Fern Container
                 this.barnsleyContainer = new PIXI.Container();
@@ -415,13 +632,19 @@
                     this.fractalSprite.width = this.app.screen.width;
                     this.fractalSprite.height = this.app.screen.height;
                     this.uniforms.uResolution = [this.app.screen.width, this.app.screen.height];
+                    this.uniformsDeep.uResolution = [this.app.screen.width, this.app.screen.height];
                     this.updateExportFrame();
                 });
             }
 
+            // Helper to split JS Double (64-bit) to two Float32
+            splitDouble(value) {
+                const high = Math.fround(value);
+                const low = value - high;
+                return [high, low];
+            }
+
             pushState() {
-                // Deep copy current state to history (limit to 20 for memory)
-                // We exclude favorites from history to avoid weird reverts
                 const snapshot = JSON.parse(JSON.stringify(this.state));
                 delete snapshot.favorites;
                 this.history.push(snapshot);
@@ -431,11 +654,9 @@
             undo() {
                 if (this.history.length === 0) return;
                 const prev = this.history.pop();
-                // Restore state but preserve current favorites
                 const currentFavs = this.state.favorites;
                 this.state = { ...prev, favorites: currentFavs };
 
-                // Update UI
                 document.getElementById('select-fractal').value = this.state.fractal;
                 document.getElementById('input-zoom').value = this.state.zoom;
                 document.getElementById('val-zoom').innerText = this.state.zoom.toFixed(2);
@@ -455,13 +676,11 @@
             }
 
             resetView() {
-                // Keep favorites, reset other view params
                 const favs = this.state.favorites;
-                this.pushState(); // Save before reset
+                this.pushState();
                 this.state = JSON.parse(JSON.stringify(this.defaultState));
                 this.state.favorites = favs;
 
-                // Update UI
                 document.getElementById('select-fractal').value = this.state.fractal;
                 document.getElementById('input-zoom').value = 1.0;
                 document.getElementById('val-zoom').innerText = "1.00";
@@ -476,18 +695,27 @@
                 this.saveSettings();
             }
 
+            isDeepZoom() {
+                // Switch to Deep Mode if zoom is large enough to need it (approx > 50,000)
+                return this.state.zoom > 50000.0;
+            }
+
             updateShader() {
                 this.fractalContainer.visible = true;
                 this.barnsleyContainer.visible = false;
                 this.fractalContainer.filters = [];
 
-                if (this.state.fractal === 'mandelbrot') {
-                    this.fractalContainer.filters = [this.mandelbrotFilter];
-                } else if (this.state.fractal === 'julia') {
-                    this.fractalContainer.filters = [this.juliaFilter];
-                } else if (this.state.fractal === 'newton') {
+                const deep = this.isDeepZoom();
+                const type = this.state.fractal;
+
+                if (type === 'mandelbrot') {
+                    this.fractalContainer.filters = deep ? [this.mandelbrotFilterDeep] : [this.mandelbrotFilter];
+                } else if (type === 'julia') {
+                    this.fractalContainer.filters = deep ? [this.juliaFilterDeep] : [this.juliaFilter];
+                } else if (type === 'newton') {
+                    // Newton does not have a deep implementation yet, falls back to normal
                     this.fractalContainer.filters = [this.newtonFilter];
-                } else if (this.state.fractal === 'barnsley') {
+                } else if (type === 'barnsley') {
                     this.fractalContainer.visible = false;
                     this.barnsleyContainer.visible = true;
                     this.renderBarnsley();
@@ -495,26 +723,74 @@
             }
 
             updateUniforms() {
-                this.uniforms.uCenter = [this.state.center.x, this.state.center.y];
-                this.uniforms.uZoom = this.state.zoom;
-                this.uniforms.uMaxIter = this.state.iterations;
-                this.uniforms.uPalette = this.state.palette;
+                // Check if we need to switch shaders due to zoom change
+                const deep = this.isDeepZoom();
 
-                this.mandelbrotFilter.uniforms.uCenter = this.uniforms.uCenter;
-                this.mandelbrotFilter.uniforms.uZoom = this.uniforms.uZoom;
-                this.mandelbrotFilter.uniforms.uMaxIter = this.uniforms.uMaxIter;
-                this.mandelbrotFilter.uniforms.uPalette = this.uniforms.uPalette;
+                // Currently active filters check (basic optimization to avoid setting if already correct)
+                // However, we just call updateShader which sets it.
+                // We should make sure updateShader is cheap or only called when needed.
+                // For now, let's call updateShader inside updateUniforms if the mode changed?
+                // Easier to just ensure the right filter is active.
 
-                this.juliaFilter.uniforms.uCenter = this.uniforms.uCenter;
-                this.juliaFilter.uniforms.uZoom = this.uniforms.uZoom;
-                this.juliaFilter.uniforms.uMaxIter = this.uniforms.uMaxIter;
-                this.juliaFilter.uniforms.uPalette = this.uniforms.uPalette;
-                this.juliaFilter.uniforms.uJuliaC = [this.state.juliaC.x, this.state.juliaC.y];
+                const currentFilters = this.fractalContainer.filters;
+                let neededFilter;
+                if (this.state.fractal === 'mandelbrot') neededFilter = deep ? this.mandelbrotFilterDeep : this.mandelbrotFilter;
+                else if (this.state.fractal === 'julia') neededFilter = deep ? this.juliaFilterDeep : this.juliaFilter;
+                else if (this.state.fractal === 'newton') neededFilter = this.newtonFilter;
 
-                this.newtonFilter.uniforms.uCenter = this.uniforms.uCenter;
-                this.newtonFilter.uniforms.uZoom = this.uniforms.uZoom;
-                this.newtonFilter.uniforms.uMaxIter = this.uniforms.uMaxIter;
-                this.newtonFilter.uniforms.uPalette = this.uniforms.uPalette;
+                if (this.state.fractal !== 'barnsley' && (!currentFilters || currentFilters[0] !== neededFilter)) {
+                    this.fractalContainer.filters = [neededFilter];
+                }
+
+                // Update Uniform Values
+                if (!deep) {
+                    // Standard Uniforms
+                    this.uniforms.uCenter = [this.state.center.x, this.state.center.y];
+                    this.uniforms.uZoom = this.state.zoom;
+                    this.uniforms.uMaxIter = this.state.iterations;
+                    this.uniforms.uPalette = this.state.palette;
+
+                    // Propagate to filters
+                    this.mandelbrotFilter.uniforms.uCenter = this.uniforms.uCenter;
+                    this.mandelbrotFilter.uniforms.uZoom = this.uniforms.uZoom;
+                    this.mandelbrotFilter.uniforms.uMaxIter = this.uniforms.uMaxIter;
+                    this.mandelbrotFilter.uniforms.uPalette = this.uniforms.uPalette;
+
+                    this.juliaFilter.uniforms.uCenter = this.uniforms.uCenter;
+                    this.juliaFilter.uniforms.uZoom = this.uniforms.uZoom;
+                    this.juliaFilter.uniforms.uMaxIter = this.uniforms.uMaxIter;
+                    this.juliaFilter.uniforms.uPalette = this.uniforms.uPalette;
+                    this.juliaFilter.uniforms.uJuliaC = [this.state.juliaC.x, this.state.juliaC.y];
+
+                    this.newtonFilter.uniforms.uCenter = this.uniforms.uCenter;
+                    this.newtonFilter.uniforms.uZoom = this.uniforms.uZoom;
+                    this.newtonFilter.uniforms.uMaxIter = this.uniforms.uMaxIter;
+                    this.newtonFilter.uniforms.uPalette = this.uniforms.uPalette;
+                } else {
+                    // Deep Uniforms
+                    const cx = this.splitDouble(this.state.center.x);
+                    const cy = this.splitDouble(this.state.center.y);
+                    const scale = 3.0 / this.state.zoom;
+
+                    this.mandelbrotFilterDeep.uniforms.uCenterRe = cx;
+                    this.mandelbrotFilterDeep.uniforms.uCenterIm = cy;
+                    this.mandelbrotFilterDeep.uniforms.uScale = scale;
+                    this.mandelbrotFilterDeep.uniforms.uMaxIter = this.state.iterations;
+                    this.mandelbrotFilterDeep.uniforms.uPalette = this.state.palette;
+
+                    if (this.state.fractal === 'julia') {
+                        const jcx = this.splitDouble(this.state.juliaC.x);
+                        const jcy = this.splitDouble(this.state.juliaC.y);
+
+                        this.juliaFilterDeep.uniforms.uCenterRe = cx;
+                        this.juliaFilterDeep.uniforms.uCenterIm = cy;
+                        this.juliaFilterDeep.uniforms.uScale = scale;
+                        this.juliaFilterDeep.uniforms.uMaxIter = this.state.iterations;
+                        this.juliaFilterDeep.uniforms.uPalette = this.state.palette;
+                        this.juliaFilterDeep.uniforms.uJuliaCRe = jcx;
+                        this.juliaFilterDeep.uniforms.uJuliaCIm = jcy;
+                    }
+                }
 
                 if (this.state.fractal === 'barnsley') {
                     const w = this.app.screen.width;
@@ -552,9 +828,6 @@
             }
 
             getScaleFactor() {
-                // Returns world unit span for zooming/panning calculations
-                // Shaders (Mandelbrot, Julia, Newton) use ~3.0
-                // Barnsley uses ~10.0 (roughly -2.5 to 2.5 x, 0 to 10 y)
                 if (this.state.fractal === 'barnsley') return 10.0;
                 return 3.0;
             }
@@ -566,7 +839,6 @@
                     return;
                 }
 
-                // We want 16:9 box centered
                 const sw = this.app.screen.width;
                 const sh = this.app.screen.height;
                 const aspect = 16/9;
@@ -595,22 +867,16 @@
                 let isDragging = false;
                 let lastPoint = null;
 
-                // Track interaction start for undo
                 const handleStart = (e) => {
-                    // Prevent default touches (like scrolling)
                     if(e.type === 'touchstart') e.preventDefault();
 
                     activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
-                    // On first interaction touch/click, save state
-                    // We only save state if we are just starting an interaction (0->1 or 1->2 pointers)
-                    // But to avoid spamming history, maybe only on 0->1
                     if (activePointers.size === 1) {
                          this.pushState();
                          isDragging = true;
                          lastPoint = { x: e.clientX, y: e.clientY };
                     } else if (activePointers.size === 2) {
-                        // Switch to pinch mode
                         isDragging = false;
                         const points = Array.from(activePointers.values());
                         initialPinchDist = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
@@ -620,75 +886,28 @@
 
                 const handleMove = (e) => {
                     if (!activePointers.has(e.pointerId)) return;
-
-                    // Update pointer position
                     activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
                     if (activePointers.size === 1 && isDragging) {
-                        // Pan
                         const current = { x: e.clientX, y: e.clientY };
                         const dx = current.x - lastPoint.x;
                         const dy = current.y - lastPoint.y;
                         const scale = this.getScaleFactor() / (this.state.zoom * Math.min(this.app.screen.width, this.app.screen.height));
 
                         this.state.center.x -= dx * scale;
-                        this.state.center.y += dy * scale; // WebGL Y is up, Screen Y is down.
-                        // Wait, previous code was: center.y += dy * scale.
-                        // Let's check coords. Screen (0,0) is Top-Left. dy > 0 means moving down.
-                        // If I drag mouse DOWN, I expect the view to move UP (camera moves down).
-                        // If camera moves down (y decreases), we see content above.
-                        // Wait, standard map drag: Drag DOWN -> View moves DOWN (y increases).
-                        // Let's verify existing logic: "center.y += dy * scale".
-                        // If dy > 0 (down drag), center.y increases.
-                        // Shader: vec2 z = uCenter + uv * ...
-                        // If uCenter.y increases, the rendered window shifts UP in value space.
-                        // So if I drag DOWN, I want to see lower Y values? No.
-                        // If I drag DOWN, I want the image to follow my finger.
-                        // Image at Y=0 moves to Y=10.
-                        // So we are looking at HIGHER Y values? No, LOWER Y values (since Y goes UP in math).
-                        // Standard GL coords: Y is UP.
-                        // Screen Coords: Y is DOWN.
-                        // Drag Down (dy > 0). The pixel under my finger moves down.
-                        // The world content should move down.
-                        // So the viewport center should move UP (increase Y).
-                        // So "center.y += dy * scale" seems correct for dragging the "camera" opposite to drag?
-                        // Actually, to drag the map, we subtract delta from center.
-                        // center -= delta.
-                        // If drag right (dx > 0), we want to see left content. So center X decreases.
-                        // So center.x -= dx * scale. Correct.
-                        // If drag down (dy > 0), we want to see top content (higher Y).
-                        // So center Y increases.
-                        // So center.y += dy * scale. Correct.
+                        this.state.center.y += dy * scale;
 
                         lastPoint = current;
                         this.updateUniforms();
 
                     } else if (activePointers.size === 2) {
-                        // Pinch Zoom
                         const points = Array.from(activePointers.values());
                         const dist = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
 
                         if (initialPinchDist > 0) {
-                            // "err on the side of slow" - dampen the zoom ratio
                             const ratio = dist / initialPinchDist;
-                            // Dampened ratio: standard ratio might be too fast.
-                            // Let's map ratio 1.0 -> 1.0.
-                            // ratio 2.0 -> 2.0 (Double zoom).
-                            // Maybe just apply directly but the initialPinchDist updates less frequently?
-                            // Actually, calculating new zoom based on initialZoom is stable.
-                            // To make it slower, we can power it? ratio^0.5 ?
-                            // Or just use the direct ratio, it's usually natural.
-                            // User asked for "controllable". Linear mapping is usually most controllable.
-                            // Let's use direct ratio but ensure we don't jump.
-
                             const newZoom = initialZoom * ratio;
                             this.state.zoom = newZoom;
-
-                            // Optional: Pan to midpoint of pinch (advanced, maybe skip for simplicity/stability first)
-                            // To implement correct pinch-zoom-pan:
-                            // We need to keep the world point under the pinch center stationary.
-                            // It's tricky with "initialZoom" approach because we'd need to accumulate pan.
-                            // Simple zoom for now.
 
                             document.getElementById('input-zoom').value = this.state.zoom;
                             document.getElementById('val-zoom').innerText = this.state.zoom.toFixed(2);
@@ -703,7 +922,6 @@
                         initialPinchDist = 0;
                     }
                     if (activePointers.size === 1) {
-                         // Reset drag anchor to prevent jump
                          isDragging = true;
                          const p = activePointers.values().next().value;
                          lastPoint = { x: p.x, y: p.y };
@@ -719,15 +937,8 @@
                 canvas.addEventListener('pointerout', handleEnd);
                 canvas.addEventListener('pointerleave', handleEnd);
 
-
-                // Cursor-Centered Zoom (Wheel)
                 const onWheel = (e) => {
                     e.preventDefault();
-                    // We don't push state on every wheel tick, it's too much.
-                    // Maybe we should debounce?
-                    // For now, no undo for wheel zoom unless we implement complex timer logic.
-                    // Or just push state if some time passed?
-
                     const rect = this.app.view.getBoundingClientRect();
                     const mx = e.clientX - rect.left;
                     const my = e.clientY - rect.top;
@@ -759,7 +970,6 @@
 
                 canvas.addEventListener('wheel', onWheel, { passive: false });
 
-                // Double Click / Tap Zoom
                 const onDblClick = (e) => {
                     e.preventDefault();
                     this.pushState();
@@ -771,25 +981,20 @@
                     const h = this.app.screen.height;
                     const minDim = Math.min(w, h);
 
-                    // Click in UV space (center relative)
                     const u = (mx - w * 0.5) / minDim;
                     const v = (h * 0.5 - my) / minDim;
 
-                    // Calculate World Point of Click
-                    // P_w = Center + UV * (Scale / Zoom)
                     const scale = this.getScaleFactor();
                     const wx = this.state.center.x + u * (scale / this.state.zoom);
                     const wy = this.state.center.y + v * (scale / this.state.zoom);
 
-                    // Set new center to Click Point
                     this.state.center.x = wx;
                     this.state.center.y = wy;
 
-                    // Zoom In or Out
                     if (e.altKey) {
-                        this.state.zoom /= 2.0; // Zoom Out
+                        this.state.zoom /= 2.0;
                     } else {
-                        this.state.zoom *= 2.0; // Zoom In
+                        this.state.zoom *= 2.0;
                     }
 
                     document.getElementById('input-zoom').value = this.state.zoom;
@@ -799,8 +1004,6 @@
 
                 canvas.addEventListener('dblclick', onDblClick);
 
-
-                // Keyboard Panning
                 window.addEventListener('keydown', (e) => {
                     const minDim = Math.min(this.app.screen.width, this.app.screen.height);
                     const scale = this.getScaleFactor() / (this.state.zoom * minDim);
@@ -816,7 +1019,6 @@
                     this.updateUniforms();
                 });
 
-                // UI Controls
                 document.getElementById('select-fractal').addEventListener('change', (e) => {
                     this.state.fractal = e.target.value;
                     if (this.state.fractal === 'julia') document.getElementById('julia-controls').classList.remove('hidden');
@@ -846,7 +1048,6 @@
                     this.updateUniforms();
                 });
 
-                // Export Frame Toggle
                 document.getElementById('check-export-frame').addEventListener('change', (e) => {
                     this.showExportFrame = e.target.checked;
                     this.updateExportFrame();
@@ -953,20 +1154,13 @@
             }
 
             exportHighRes() {
-                // Target: 4K (16:9)
                 const targetW = 3840;
                 const targetH = 2160;
 
-                // If the export frame is shown, we want to match its content.
-                // If not shown, we default to matching what is visible on screen as best as possible (fitting width or height).
-                // Let's assume we always want to match what the 'Export Frame' WOULD show.
-
-                // On Screen Logic:
                 const sw = this.app.screen.width;
                 const sh = this.app.screen.height;
                 const sMin = Math.min(sw, sh);
 
-                // Export Frame Overlay dimensions
                 const aspect = 16/9;
                 let frameW = sw * 0.9;
                 let frameH = frameW / aspect;
@@ -975,33 +1169,73 @@
                     frameW = frameH * aspect;
                 }
 
-                // Calculate Adjusted Zoom
-                // World Height of Overlay = FrameH * (3.0 / (Zoom * sMin))
-                // World Height of Target = 3.0 / ExportZoom  (since Target H is min dim for 16:9)
-                // Equalize: FrameH / (Zoom * sMin) = 1 / ExportZoom
-                // ExportZoom = (Zoom * sMin) / FrameH
-
                 const exportZoom = (this.state.zoom * sMin) / frameH;
 
-                // Prepare Render Texture
                 const renderTexture = PIXI.RenderTexture.create({ width: targetW, height: targetH });
 
-                // Setup specific filter for export
-                const uniforms = {
-                     uResolution: [targetW, targetH],
-                     uCenter: [this.state.center.x, this.state.center.y],
-                     uZoom: exportZoom,
-                     uMaxIter: this.state.iterations,
-                     uPalette: this.state.palette,
-                     uJuliaC: [this.state.juliaC.x, this.state.juliaC.y]
-                };
-
+                // Check Deep for export too
+                const deep = exportZoom > 50000;
                 let filter;
-                if (this.state.fractal === 'mandelbrot') filter = new PIXI.Filter(vertexShader, mandelbrotFrag, uniforms);
-                else if (this.state.fractal === 'julia') filter = new PIXI.Filter(vertexShader, juliaFrag, uniforms);
-                else if (this.state.fractal === 'newton') filter = new PIXI.Filter(vertexShader, newtonFrag, uniforms);
+
+                if (this.state.fractal === 'mandelbrot') {
+                     if (deep) {
+                         const cx = this.splitDouble(this.state.center.x);
+                         const cy = this.splitDouble(this.state.center.y);
+                         filter = new PIXI.Filter(vertexShader, mandelbrotFragDeep, {
+                             uResolution: [targetW, targetH],
+                             uCenterRe: cx,
+                             uCenterIm: cy,
+                             uScale: 3.0 / exportZoom,
+                             uMaxIter: this.state.iterations,
+                             uPalette: this.state.palette
+                         });
+                     } else {
+                         filter = new PIXI.Filter(vertexShader, mandelbrotFrag, {
+                             uResolution: [targetW, targetH],
+                             uCenter: [this.state.center.x, this.state.center.y],
+                             uZoom: exportZoom,
+                             uMaxIter: this.state.iterations,
+                             uPalette: this.state.palette
+                         });
+                     }
+                }
+                else if (this.state.fractal === 'julia') {
+                    if (deep) {
+                        const cx = this.splitDouble(this.state.center.x);
+                        const cy = this.splitDouble(this.state.center.y);
+                        const jcx = this.splitDouble(this.state.juliaC.x);
+                        const jcy = this.splitDouble(this.state.juliaC.y);
+                        filter = new PIXI.Filter(vertexShader, juliaFragDeep, {
+                            uResolution: [targetW, targetH],
+                            uCenterRe: cx,
+                            uCenterIm: cy,
+                            uScale: 3.0 / exportZoom,
+                            uMaxIter: this.state.iterations,
+                            uPalette: this.state.palette,
+                            uJuliaCRe: jcx,
+                            uJuliaCIm: jcy
+                        });
+                    } else {
+                        filter = new PIXI.Filter(vertexShader, juliaFrag, {
+                            uResolution: [targetW, targetH],
+                            uCenter: [this.state.center.x, this.state.center.y],
+                            uZoom: exportZoom,
+                            uMaxIter: this.state.iterations,
+                            uPalette: this.state.palette,
+                            uJuliaC: [this.state.juliaC.x, this.state.juliaC.y]
+                        });
+                    }
+                }
+                else if (this.state.fractal === 'newton') {
+                    filter = new PIXI.Filter(vertexShader, newtonFrag, {
+                        uResolution: [targetW, targetH],
+                        uCenter: [this.state.center.x, this.state.center.y],
+                        uZoom: exportZoom,
+                        uMaxIter: this.state.iterations,
+                        uPalette: this.state.palette
+                    });
+                }
                 else {
-                    // Barnsley not supported for high-res shader export easily in this pipeline without logic duplication
                     alert("High-res export not fully supported for Barnsley Fern yet.");
                     return;
                 }
@@ -1011,10 +1245,8 @@
                 sprite.height = targetH;
                 sprite.filters = [filter];
 
-                // Render
                 this.app.renderer.render(sprite, { renderTexture });
 
-                // Extract
                 this.app.renderer.extract.canvas(renderTexture).toBlob((blob) => {
                     const a = document.createElement('a');
                     document.body.append(a);
@@ -1022,8 +1254,6 @@
                     a.href = URL.createObjectURL(blob);
                     a.click();
                     a.remove();
-
-                    // Cleanup
                     renderTexture.destroy(true);
                     sprite.destroy();
                 }, 'image/png');
@@ -1056,14 +1286,6 @@
         document.getElementById('btn-export-highres').addEventListener('click', () => app.exportHighRes());
         document.getElementById('btn-undo').addEventListener('click', () => app.undo());
         document.getElementById('btn-reset').addEventListener('click', () => app.resetView());
-
-        // Removed old btn-export in favor of highres, or keeping it?
-        // HTML has btn-export but I didn't update the binding in the new script block?
-        // Wait, the HTML I wrote above removed `btn-export` and added `btn-reset` in the top bar?
-        // No, `btn-export` is gone from top bar in my HTML above?
-        // Let's check the HTML string.
-        // The top bar has: btn-save-fav, btn-favorites, btn-reset.
-        // The export is now in the sidebar under "Export".
 
         window.addEventListener('beforeunload', () => app.saveSettings());
 
