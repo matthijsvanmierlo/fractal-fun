@@ -7,9 +7,9 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.3.2/pixi.min.js"></script>
     <style>
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #000; }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #000; touch-action: none; }
         .noselect { -webkit-user-select: none; user-select: none; }
-        canvas { display: block; }
+        canvas { display: block; touch-action: none; }
         /* Scrollbar customization for the UI panel */
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: rgba(0,0,0,0.1); }
@@ -42,6 +42,9 @@
                 </button>
                 <button id="btn-favorites" class="bg-black/60 backdrop-blur-md hover:bg-white/10 p-2 rounded-lg border border-white/10 transition" title="View Favorites">
                     <svg class="w-5 h-5 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                </button>
+                <button id="btn-undo" class="bg-black/60 backdrop-blur-md hover:bg-white/10 p-2 rounded-lg border border-white/10 transition" title="Undo Zoom">
+                    <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"></path></svg>
                 </button>
                 <button id="btn-reset" class="bg-black/60 backdrop-blur-md hover:bg-white/10 p-2 rounded-lg border border-white/10 transition" title="Reset View">
                     <svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m-15.357-2a8.001 8.001 0 0015.357-2m0 0H15"></path></svg>
@@ -192,7 +195,7 @@
 
         // Shader Code Definitions - Loops increased to 5000
         const mandelbrotFrag = `
-            precision mediump float;
+            precision highp float;
             varying vec2 vTextureCoord;
             uniform vec2 uResolution;
             uniform vec2 uCenter;
@@ -230,7 +233,7 @@
         `;
 
         const juliaFrag = `
-            precision mediump float;
+            precision highp float;
             varying vec2 vTextureCoord;
             uniform vec2 uResolution;
             uniform vec2 uCenter;
@@ -269,7 +272,7 @@
         `;
 
         const newtonFrag = `
-            precision mediump float;
+            precision highp float;
             varying vec2 vTextureCoord;
             uniform vec2 uResolution;
             uniform vec2 uCenter;
@@ -368,6 +371,7 @@
                 };
 
                 this.state = JSON.parse(JSON.stringify(this.defaultState));
+                this.history = [];
                 this.showExportFrame = false;
 
                 // Filter container
@@ -415,9 +419,45 @@
                 });
             }
 
+            pushState() {
+                // Deep copy current state to history (limit to 20 for memory)
+                // We exclude favorites from history to avoid weird reverts
+                const snapshot = JSON.parse(JSON.stringify(this.state));
+                delete snapshot.favorites;
+                this.history.push(snapshot);
+                if (this.history.length > 20) this.history.shift();
+            }
+
+            undo() {
+                if (this.history.length === 0) return;
+                const prev = this.history.pop();
+                // Restore state but preserve current favorites
+                const currentFavs = this.state.favorites;
+                this.state = { ...prev, favorites: currentFavs };
+
+                // Update UI
+                document.getElementById('select-fractal').value = this.state.fractal;
+                document.getElementById('input-zoom').value = this.state.zoom;
+                document.getElementById('val-zoom').innerText = this.state.zoom.toFixed(2);
+                document.getElementById('input-iter').value = this.state.iterations;
+                document.getElementById('val-iter').innerText = this.state.iterations;
+
+                if (this.state.fractal === 'julia') {
+                    document.getElementById('julia-controls').classList.remove('hidden');
+                    document.getElementById('input-julia-re').value = this.state.juliaC.x;
+                    document.getElementById('input-julia-im').value = this.state.juliaC.y;
+                } else {
+                    document.getElementById('julia-controls').classList.add('hidden');
+                }
+
+                this.updateShader();
+                this.updateUniforms();
+            }
+
             resetView() {
                 // Keep favorites, reset other view params
                 const favs = this.state.favorites;
+                this.pushState(); // Save before reset
                 this.state = JSON.parse(JSON.stringify(this.defaultState));
                 this.state.favorites = favs;
 
@@ -548,33 +588,146 @@
             }
 
             bindEvents() {
-                // Mouse Drag
+                const canvas = this.app.view;
+                let activePointers = new Map();
+                let initialPinchDist = 0;
+                let initialZoom = 1;
                 let isDragging = false;
-                let lastPos = null;
+                let lastPoint = null;
 
-                const onDown = (e) => {
-                    isDragging = true;
-                    lastPos = { x: e.global.x, y: e.global.y };
+                // Track interaction start for undo
+                const handleStart = (e) => {
+                    // Prevent default touches (like scrolling)
+                    if(e.type === 'touchstart') e.preventDefault();
+
+                    activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+                    // On first interaction touch/click, save state
+                    // We only save state if we are just starting an interaction (0->1 or 1->2 pointers)
+                    // But to avoid spamming history, maybe only on 0->1
+                    if (activePointers.size === 1) {
+                         this.pushState();
+                         isDragging = true;
+                         lastPoint = { x: e.clientX, y: e.clientY };
+                    } else if (activePointers.size === 2) {
+                        // Switch to pinch mode
+                        isDragging = false;
+                        const points = Array.from(activePointers.values());
+                        initialPinchDist = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+                        initialZoom = this.state.zoom;
+                    }
                 };
 
-                const onMove = (e) => {
-                    if (!isDragging) return;
-                    const newPos = { x: e.global.x, y: e.global.y };
-                    const dx = newPos.x - lastPos.x;
-                    const dy = newPos.y - lastPos.y;
-                    const scale = this.getScaleFactor() / (this.state.zoom * Math.min(this.app.screen.width, this.app.screen.height));
+                const handleMove = (e) => {
+                    if (!activePointers.has(e.pointerId)) return;
 
-                    this.state.center.x -= dx * scale;
-                    this.state.center.y += dy * scale;
-                    lastPos = newPos;
-                    this.updateUniforms();
+                    // Update pointer position
+                    activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+                    if (activePointers.size === 1 && isDragging) {
+                        // Pan
+                        const current = { x: e.clientX, y: e.clientY };
+                        const dx = current.x - lastPoint.x;
+                        const dy = current.y - lastPoint.y;
+                        const scale = this.getScaleFactor() / (this.state.zoom * Math.min(this.app.screen.width, this.app.screen.height));
+
+                        this.state.center.x -= dx * scale;
+                        this.state.center.y += dy * scale; // WebGL Y is up, Screen Y is down.
+                        // Wait, previous code was: center.y += dy * scale.
+                        // Let's check coords. Screen (0,0) is Top-Left. dy > 0 means moving down.
+                        // If I drag mouse DOWN, I expect the view to move UP (camera moves down).
+                        // If camera moves down (y decreases), we see content above.
+                        // Wait, standard map drag: Drag DOWN -> View moves DOWN (y increases).
+                        // Let's verify existing logic: "center.y += dy * scale".
+                        // If dy > 0 (down drag), center.y increases.
+                        // Shader: vec2 z = uCenter + uv * ...
+                        // If uCenter.y increases, the rendered window shifts UP in value space.
+                        // So if I drag DOWN, I want to see lower Y values? No.
+                        // If I drag DOWN, I want the image to follow my finger.
+                        // Image at Y=0 moves to Y=10.
+                        // So we are looking at HIGHER Y values? No, LOWER Y values (since Y goes UP in math).
+                        // Standard GL coords: Y is UP.
+                        // Screen Coords: Y is DOWN.
+                        // Drag Down (dy > 0). The pixel under my finger moves down.
+                        // The world content should move down.
+                        // So the viewport center should move UP (increase Y).
+                        // So "center.y += dy * scale" seems correct for dragging the "camera" opposite to drag?
+                        // Actually, to drag the map, we subtract delta from center.
+                        // center -= delta.
+                        // If drag right (dx > 0), we want to see left content. So center X decreases.
+                        // So center.x -= dx * scale. Correct.
+                        // If drag down (dy > 0), we want to see top content (higher Y).
+                        // So center Y increases.
+                        // So center.y += dy * scale. Correct.
+
+                        lastPoint = current;
+                        this.updateUniforms();
+
+                    } else if (activePointers.size === 2) {
+                        // Pinch Zoom
+                        const points = Array.from(activePointers.values());
+                        const dist = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+
+                        if (initialPinchDist > 0) {
+                            // "err on the side of slow" - dampen the zoom ratio
+                            const ratio = dist / initialPinchDist;
+                            // Dampened ratio: standard ratio might be too fast.
+                            // Let's map ratio 1.0 -> 1.0.
+                            // ratio 2.0 -> 2.0 (Double zoom).
+                            // Maybe just apply directly but the initialPinchDist updates less frequently?
+                            // Actually, calculating new zoom based on initialZoom is stable.
+                            // To make it slower, we can power it? ratio^0.5 ?
+                            // Or just use the direct ratio, it's usually natural.
+                            // User asked for "controllable". Linear mapping is usually most controllable.
+                            // Let's use direct ratio but ensure we don't jump.
+
+                            const newZoom = initialZoom * ratio;
+                            this.state.zoom = newZoom;
+
+                            // Optional: Pan to midpoint of pinch (advanced, maybe skip for simplicity/stability first)
+                            // To implement correct pinch-zoom-pan:
+                            // We need to keep the world point under the pinch center stationary.
+                            // It's tricky with "initialZoom" approach because we'd need to accumulate pan.
+                            // Simple zoom for now.
+
+                            document.getElementById('input-zoom').value = this.state.zoom;
+                            document.getElementById('val-zoom').innerText = this.state.zoom.toFixed(2);
+                            this.updateUniforms();
+                        }
+                    }
                 };
 
-                const onUp = () => { isDragging = false; lastPos = null; };
+                const handleEnd = (e) => {
+                    activePointers.delete(e.pointerId);
+                    if (activePointers.size < 2) {
+                        initialPinchDist = 0;
+                    }
+                    if (activePointers.size === 1) {
+                         // Reset drag anchor to prevent jump
+                         isDragging = true;
+                         const p = activePointers.values().next().value;
+                         lastPoint = { x: p.x, y: p.y };
+                    } else {
+                        isDragging = false;
+                    }
+                };
 
-                // Cursor-Centered Zoom
+                canvas.addEventListener('pointerdown', handleStart);
+                canvas.addEventListener('pointermove', handleMove);
+                canvas.addEventListener('pointerup', handleEnd);
+                canvas.addEventListener('pointercancel', handleEnd);
+                canvas.addEventListener('pointerout', handleEnd);
+                canvas.addEventListener('pointerleave', handleEnd);
+
+
+                // Cursor-Centered Zoom (Wheel)
                 const onWheel = (e) => {
                     e.preventDefault();
+                    // We don't push state on every wheel tick, it's too much.
+                    // Maybe we should debounce?
+                    // For now, no undo for wheel zoom unless we implement complex timer logic.
+                    // Or just push state if some time passed?
+
                     const rect = this.app.view.getBoundingClientRect();
                     const mx = e.clientX - rect.left;
                     const my = e.clientY - rect.top;
@@ -582,9 +735,6 @@
                     const h = this.app.screen.height;
                     const minDim = Math.min(w, h);
 
-                    // Current mouse pos in UV-normalized centered coords (Y inverted relative to screen)
-                    // uv.x = (mx - w/2) / minDim
-                    // uv.y = (h/2 - my) / minDim
                     const u = (mx - w * 0.5) / minDim;
                     const v = (h * 0.5 - my) / minDim;
 
@@ -597,8 +747,6 @@
                         this.state.zoom /= zoomFactor;
                     }
 
-                    // Adjust center to keep mouse world position stationary
-                    // CenterNew = CenterOld + (UV) * (Scale/ZoomOld - Scale/ZoomNew)
                     const term = this.getScaleFactor() * (1.0/oldZoom - 1.0/this.state.zoom);
                     this.state.center.x += u * term;
                     this.state.center.y += v * term;
@@ -609,29 +757,64 @@
                     this.updateUniforms();
                 };
 
+                canvas.addEventListener('wheel', onWheel, { passive: false });
+
+                // Double Click / Tap Zoom
+                const onDblClick = (e) => {
+                    e.preventDefault();
+                    this.pushState();
+
+                    const rect = canvas.getBoundingClientRect();
+                    const mx = e.clientX - rect.left;
+                    const my = e.clientY - rect.top;
+                    const w = this.app.screen.width;
+                    const h = this.app.screen.height;
+                    const minDim = Math.min(w, h);
+
+                    // Click in UV space (center relative)
+                    const u = (mx - w * 0.5) / minDim;
+                    const v = (h * 0.5 - my) / minDim;
+
+                    // Calculate World Point of Click
+                    // P_w = Center + UV * (Scale / Zoom)
+                    const scale = this.getScaleFactor();
+                    const wx = this.state.center.x + u * (scale / this.state.zoom);
+                    const wy = this.state.center.y + v * (scale / this.state.zoom);
+
+                    // Set new center to Click Point
+                    this.state.center.x = wx;
+                    this.state.center.y = wy;
+
+                    // Zoom In or Out
+                    if (e.altKey) {
+                        this.state.zoom /= 2.0; // Zoom Out
+                    } else {
+                        this.state.zoom *= 2.0; // Zoom In
+                    }
+
+                    document.getElementById('input-zoom').value = this.state.zoom;
+                    document.getElementById('val-zoom').innerText = this.state.zoom.toFixed(2);
+                    this.updateUniforms();
+                };
+
+                canvas.addEventListener('dblclick', onDblClick);
+
+
                 // Keyboard Panning
                 window.addEventListener('keydown', (e) => {
                     const minDim = Math.min(this.app.screen.width, this.app.screen.height);
                     const scale = this.getScaleFactor() / (this.state.zoom * minDim);
-                    const stepPixels = 50; // Move 50 pixels worth
+                    const stepPixels = 50;
                     const moveStep = stepPixels * scale;
 
-                    if (e.key === 'ArrowUp') this.state.center.y += moveStep;
-                    else if (e.key === 'ArrowDown') this.state.center.y -= moveStep;
-                    else if (e.key === 'ArrowLeft') this.state.center.x -= moveStep;
-                    else if (e.key === 'ArrowRight') this.state.center.x += moveStep;
+                    if (e.key === 'ArrowUp') { this.pushState(); this.state.center.y += moveStep; }
+                    else if (e.key === 'ArrowDown') { this.pushState(); this.state.center.y -= moveStep; }
+                    else if (e.key === 'ArrowLeft') { this.pushState(); this.state.center.x -= moveStep; }
+                    else if (e.key === 'ArrowRight') { this.pushState(); this.state.center.x += moveStep; }
                     else return;
 
                     this.updateUniforms();
                 });
-
-                this.fractalSprite.eventMode = 'static';
-                this.fractalSprite.on('pointerdown', onDown);
-                this.fractalSprite.on('globalpointermove', onMove);
-                this.fractalSprite.on('pointerup', onUp);
-                this.fractalSprite.on('pointerupoutside', onUp);
-
-                this.app.view.addEventListener('wheel', onWheel, { passive: false });
 
                 // UI Controls
                 document.getElementById('select-fractal').addEventListener('change', (e) => {
@@ -871,6 +1054,7 @@
         });
 
         document.getElementById('btn-export-highres').addEventListener('click', () => app.exportHighRes());
+        document.getElementById('btn-undo').addEventListener('click', () => app.undo());
         document.getElementById('btn-reset').addEventListener('click', () => app.resetView());
 
         // Removed old btn-export in favor of highres, or keeping it?
