@@ -1,1 +1,801 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Fractal Visualizer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.3.2/pixi.min.js"></script>
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #000; }
+        canvas { display: block; }
+        /* Scrollbar customization for the UI panel */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: rgba(0,0,0,0.1); }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.4); }
+    </style>
+</head>
+<body class="text-white font-sans antialiased">
+    <!-- PixiJS Container -->
+    <div id="canvas-container" class="absolute inset-0 z-0"></div>
 
+    <!-- UI Container -->
+    <div id="ui-container" class="absolute top-0 left-0 w-full h-full pointer-events-none z-10 flex flex-col justify-between p-4">
+
+        <!-- Header / Top Bar -->
+        <div class="flex justify-between items-start pointer-events-auto">
+            <div class="bg-black/60 backdrop-blur-md rounded-lg p-3 border border-white/10 shadow-lg">
+                <h1 class="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-500">Fractal Explorer</h1>
+                <p class="text-xs text-gray-400">Navigate the infinite</p>
+            </div>
+
+            <div class="flex gap-2">
+                <button id="btn-save-fav" class="bg-black/60 backdrop-blur-md hover:bg-white/10 p-2 rounded-lg border border-white/10 transition" title="Save Favorite">
+                    <svg class="w-5 h-5 text-pink-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"></path></svg>
+                </button>
+                <button id="btn-favorites" class="bg-black/60 backdrop-blur-md hover:bg-white/10 p-2 rounded-lg border border-white/10 transition" title="View Favorites">
+                    <svg class="w-5 h-5 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                </button>
+                <button id="btn-export" class="bg-black/60 backdrop-blur-md hover:bg-white/10 p-2 rounded-lg border border-white/10 transition" title="Export Image">
+                    <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- Sidebar Control Panel -->
+        <div id="controls-panel" class="pointer-events-auto bg-black/60 backdrop-blur-md border border-white/10 rounded-lg p-4 w-full max-w-sm mt-4 ml-auto sm:ml-0 overflow-y-auto max-h-[70vh] shadow-2xl transition-transform duration-300">
+            <div class="space-y-4">
+
+                <!-- Fractal Selector -->
+                <div>
+                    <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Fractal Type</label>
+                    <select id="select-fractal" class="w-full bg-white/10 border border-white/20 rounded px-2 py-1 text-sm focus:outline-none focus:border-blue-500 transition">
+                        <option value="mandelbrot">Mandelbrot Set</option>
+                        <option value="julia">Julia Set</option>
+                        <option value="newton">Newton Fractal</option>
+                        <option value="barnsley">Barnsley Fern</option>
+                    </select>
+                </div>
+
+                <!-- Parameters -->
+                <div class="space-y-3">
+                    <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider">Parameters</label>
+
+                    <div>
+                        <div class="flex justify-between text-xs text-gray-300 mb-1">
+                            <span>Zoom</span>
+                            <span id="val-zoom">1.0</span>
+                        </div>
+                        <input type="range" id="input-zoom" min="0.1" max="10000" step="0.1" class="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer">
+                    </div>
+
+                    <div>
+                        <div class="flex justify-between text-xs text-gray-300 mb-1">
+                            <span>Iterations / Detail</span>
+                            <span id="val-iter">100</span>
+                        </div>
+                        <input type="range" id="input-iter" min="10" max="1000" step="10" value="100" class="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer">
+                    </div>
+                </div>
+
+                <!-- Colors -->
+                <div>
+                    <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Color Palette</label>
+                    <div class="flex gap-2">
+                        <button class="w-6 h-6 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 ring-2 ring-white/50 hover:scale-110 transition" onclick="app.setPalette('default')"></button>
+                        <button class="w-6 h-6 rounded-full bg-gradient-to-br from-red-500 to-yellow-500 ring-1 ring-white/20 hover:scale-110 transition" onclick="app.setPalette('fire')"></button>
+                        <button class="w-6 h-6 rounded-full bg-gradient-to-br from-green-400 to-teal-600 ring-1 ring-white/20 hover:scale-110 transition" onclick="app.setPalette('forest')"></button>
+                        <button class="w-6 h-6 rounded-full bg-gradient-to-br from-gray-200 to-gray-800 ring-1 ring-white/20 hover:scale-110 transition" onclick="app.setPalette('bw')"></button>
+                    </div>
+                </div>
+
+                <!-- Julia Specific -->
+                <div id="julia-controls" class="hidden space-y-2 border-t border-white/10 pt-2">
+                    <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider">Julia Constant (c)</label>
+                    <div class="flex gap-2">
+                         <div class="flex-1">
+                            <span class="text-[10px] text-gray-400">Re</span>
+                            <input type="range" id="input-julia-re" min="-2" max="2" step="0.001" class="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer">
+                         </div>
+                         <div class="flex-1">
+                            <span class="text-[10px] text-gray-400">Im</span>
+                            <input type="range" id="input-julia-im" min="-2" max="2" step="0.001" class="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer">
+                         </div>
+                    </div>
+                </div>
+
+                <div class="text-[10px] text-gray-500 pt-2">
+                    Drag to Pan • Scroll/Pinch to Zoom
+                </div>
+            </div>
+        </div>
+
+        <!-- Favorites Panel (Hidden by default) -->
+        <div id="favorites-panel" class="pointer-events-auto absolute top-16 right-4 w-64 bg-black/80 backdrop-blur-md border border-white/10 rounded-lg shadow-xl hidden flex-col max-h-[80vh]">
+            <div class="p-3 border-b border-white/10 flex justify-between items-center">
+                <h3 class="text-sm font-bold">Favorites</h3>
+                <button id="btn-close-fav" class="text-gray-400 hover:text-white">&times;</button>
+            </div>
+            <div id="favorites-list" class="flex-1 overflow-y-auto p-2 space-y-2">
+                <!-- Favorites Items will be injected here -->
+                <div class="text-center text-xs text-gray-500 py-4">No favorites yet</div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // --- Shaders ---
+
+        const vertexShader = `
+            attribute vec2 aVertexPosition;
+            attribute vec2 aTextureCoord;
+
+            uniform mat3 projectionMatrix;
+
+            varying vec2 vTextureCoord;
+
+            void main(void) {
+                gl_Position = vec4((projectionMatrix * vec3(aVertexPosition, 1.0)).xy, 0.0, 1.0);
+                vTextureCoord = aTextureCoord;
+            }
+        `;
+
+        // Common utility functions for shaders
+        const shaderUtils = `
+            vec3 hsv2rgb(vec3 c) {
+                vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+                vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+                return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+            }
+
+            vec3 getPaletteColor(float t, int paletteId) {
+                if (paletteId == 1) { // Fire
+                    return vec3(t, t*0.5, 0.0);
+                } else if (paletteId == 2) { // Forest
+                    return vec3(0.0, t, t*0.5);
+                } else if (paletteId == 3) { // BW
+                    return vec3(t);
+                }
+                // Default (Rainbow/Blue-Purple)
+                return hsv2rgb(vec3(0.6 + 0.4*t, 1.0, t));
+            }
+        `;
+
+        // Shader Code Definitions
+        const mandelbrotFrag = `
+            precision mediump float;
+            varying vec2 vTextureCoord;
+            uniform vec2 uResolution;
+            uniform vec2 uCenter;
+            uniform float uZoom;
+            uniform int uMaxIter;
+            uniform int uPalette;
+
+            ` + shaderUtils + `
+
+            void main() {
+                vec2 uv = (gl_FragCoord.xy - uResolution.xy * 0.5) / min(uResolution.x, uResolution.y);
+                vec2 c = uCenter + uv * (3.0 / uZoom);
+
+                vec2 z = vec2(0.0);
+                int iter = 0;
+
+                for (int i = 0; i < 10000; i++) {
+                    if (i >= uMaxIter) break;
+                    float x = (z.x * z.x - z.y * z.y) + c.x;
+                    float y = (z.y * z.x + z.x * z.y) + c.y;
+                    if ((x * x + y * y) > 4.0) break;
+                    z.x = x; z.y = y;
+                    iter++;
+                }
+
+                if (iter == uMaxIter) {
+                    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                } else {
+                    float t = float(iter) / float(uMaxIter);
+                    t = sqrt(t);
+                    vec3 col = getPaletteColor(t, uPalette);
+                    gl_FragColor = vec4(col, 1.0);
+                }
+            }
+        `;
+
+        const juliaFrag = `
+            precision mediump float;
+            varying vec2 vTextureCoord;
+            uniform vec2 uResolution;
+            uniform vec2 uCenter;
+            uniform float uZoom;
+            uniform int uMaxIter;
+            uniform int uPalette;
+            uniform vec2 uJuliaC; // Custom C for Julia
+
+            ` + shaderUtils + `
+
+            void main() {
+                vec2 uv = (gl_FragCoord.xy - uResolution.xy * 0.5) / min(uResolution.x, uResolution.y);
+                vec2 z = uCenter + uv * (3.0 / uZoom);
+                vec2 c = uJuliaC;
+
+                int iter = 0;
+
+                for (int i = 0; i < 10000; i++) {
+                    if (i >= uMaxIter) break;
+                    float x = (z.x * z.x - z.y * z.y) + c.x;
+                    float y = (z.y * z.x + z.x * z.y) + c.y;
+                    if ((x * x + y * y) > 4.0) break;
+                    z.x = x; z.y = y;
+                    iter++;
+                }
+
+                if (iter == uMaxIter) {
+                    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                } else {
+                    float t = float(iter) / float(uMaxIter);
+                    t = sqrt(t);
+                    vec3 col = getPaletteColor(t, uPalette);
+                    gl_FragColor = vec4(col, 1.0);
+                }
+            }
+        `;
+
+        const newtonFrag = `
+            precision mediump float;
+            varying vec2 vTextureCoord;
+            uniform vec2 uResolution;
+            uniform vec2 uCenter;
+            uniform float uZoom;
+            uniform int uMaxIter;
+            uniform int uPalette;
+
+            ` + shaderUtils + `
+
+            // Complex multiplication
+            vec2 cmul(vec2 a, vec2 b) {
+                return vec2(a.x*b.x - a.y*b.y, a.x*b.y + a.y*b.x);
+            }
+
+            // Complex division
+            vec2 cdiv(vec2 a, vec2 b) {
+                float denom = b.x*b.x + b.y*b.y;
+                return vec2((a.x*b.x + a.y*b.y)/denom, (a.y*b.x - a.x*b.y)/denom);
+            }
+
+            void main() {
+                vec2 uv = (gl_FragCoord.xy - uResolution.xy * 0.5) / min(uResolution.x, uResolution.y);
+                vec2 z = uCenter + uv * (3.0 / uZoom);
+
+                // f(z) = z^3 - 1
+                // f'(z) = 3z^2
+                // Newton iteration: z = z - f(z)/f'(z)
+                // z = z - (z^3 - 1) / (3z^2)
+                // z = z - (1/3) * (z - 1/z^2)
+                // Simplifies to: z = (2/3)*z + 1/(3*z^2)
+
+                int iter = 0;
+                vec2 roots[3];
+                roots[0] = vec2(1.0, 0.0);
+                roots[1] = vec2(-0.5, 0.866025);
+                roots[2] = vec2(-0.5, -0.866025);
+
+                float minDist = 100.0;
+                int rootIdx = -1;
+
+                for (int i = 0; i < 1000; i++) {
+                    if (i >= uMaxIter) break;
+
+                    vec2 z2 = cmul(z, z);
+                    vec2 z3 = cmul(z2, z);
+                    // Numerator: z^3 - 1
+                    vec2 num = z3 - vec2(1.0, 0.0);
+                    // Denom: 3z^2
+                    vec2 den = 3.0 * z2;
+
+                    // Safe divide?
+                    if (length(den) < 0.0001) break; // Singularity
+
+                    z = z - cdiv(num, den);
+
+                    // Check convergence to roots
+                    for (int r = 0; r < 3; r++) {
+                        float d = distance(z, roots[r]);
+                        if (d < 0.001) {
+                            rootIdx = r;
+                            iter = i;
+                            break;
+                        }
+                    }
+                    if (rootIdx != -1) break;
+                }
+
+                if (rootIdx != -1) {
+                    float t = float(iter) / 50.0; // Newton converges fast usually
+                    vec3 baseCol;
+                    if (rootIdx == 0) baseCol = vec3(1.0, 0.2, 0.2);
+                    else if (rootIdx == 1) baseCol = vec3(0.2, 1.0, 0.2);
+                    else baseCol = vec3(0.2, 0.2, 1.0);
+
+                    gl_FragColor = vec4(baseCol * (1.0 - t), 1.0);
+                } else {
+                    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                }
+            }
+        `;
+
+        // --- Application Class ---
+
+        class FractalApp {
+            constructor() {
+                this.app = new PIXI.Application({
+                    resizeTo: window,
+                    backgroundColor: 0x000000,
+                    resolution: window.devicePixelRatio || 1,
+                    autoDensity: true,
+                    powerPreference: "high-performance"
+                });
+
+                document.getElementById('canvas-container').appendChild(this.app.view);
+
+                this.state = {
+                    fractal: 'mandelbrot',
+                    zoom: 1.0,
+                    center: { x: -0.5, y: 0.0 },
+                    iterations: 100,
+                    palette: 0,
+                    juliaC: { x: -0.7, y: 0.27015 },
+                    favorites: []
+                };
+
+                // Filter container
+                this.fractalContainer = new PIXI.Container();
+                this.fractalSprite = new PIXI.Sprite(PIXI.Texture.WHITE);
+                this.fractalSprite.width = this.app.screen.width;
+                this.fractalSprite.height = this.app.screen.height;
+                this.fractalContainer.addChild(this.fractalSprite);
+                this.app.stage.addChild(this.fractalContainer);
+
+                // Shader Uniforms
+                this.uniforms = {
+                    uResolution: [this.app.screen.width, this.app.screen.height],
+                    uCenter: [this.state.center.x, this.state.center.y],
+                    uZoom: this.state.zoom,
+                    uMaxIter: this.state.iterations,
+                    uPalette: this.state.palette
+                };
+
+                // Initialize Shaders
+                this.mandelbrotFilter = new PIXI.Filter(vertexShader, mandelbrotFrag, this.uniforms);
+                this.juliaFilter = new PIXI.Filter(vertexShader, juliaFrag, { ...this.uniforms, uJuliaC: [this.state.juliaC.x, this.state.juliaC.y] });
+                this.newtonFilter = new PIXI.Filter(vertexShader, newtonFrag, this.uniforms);
+
+                // Barnsley Fern Container (Particle System)
+                this.barnsleyContainer = new PIXI.Container();
+                this.barnsleyGraphics = new PIXI.Graphics();
+                this.barnsleyContainer.addChild(this.barnsleyGraphics);
+                this.barnsleyContainer.visible = false;
+                this.app.stage.addChild(this.barnsleyContainer);
+
+                // Apply initial shader
+                this.updateShader();
+                this.updateUniforms();
+
+                // Bind events
+                this.bindEvents();
+
+                // Resize handler
+                this.app.renderer.on('resize', () => {
+                    this.fractalSprite.width = this.app.screen.width;
+                    this.fractalSprite.height = this.app.screen.height;
+                    this.uniforms.uResolution = [this.app.screen.width, this.app.screen.height];
+                });
+            }
+
+            updateShader() {
+                // Reset visibility
+                this.fractalContainer.visible = true;
+                this.barnsleyContainer.visible = false;
+                this.fractalContainer.filters = [];
+
+                if (this.state.fractal === 'mandelbrot') {
+                    this.fractalContainer.filters = [this.mandelbrotFilter];
+                } else if (this.state.fractal === 'julia') {
+                    this.fractalContainer.filters = [this.juliaFilter];
+                } else if (this.state.fractal === 'newton') {
+                    this.fractalContainer.filters = [this.newtonFilter];
+                } else if (this.state.fractal === 'barnsley') {
+                    this.fractalContainer.visible = false;
+                    this.barnsleyContainer.visible = true;
+                    this.renderBarnsley();
+                }
+            }
+
+            updateUniforms() {
+                // Sync uniforms object with state
+                this.uniforms.uCenter = [this.state.center.x, this.state.center.y];
+                this.uniforms.uZoom = this.state.zoom;
+                this.uniforms.uMaxIter = this.state.iterations;
+                this.uniforms.uPalette = this.state.palette;
+
+                // Update specific filter uniforms
+                this.mandelbrotFilter.uniforms.uCenter = this.uniforms.uCenter;
+                this.mandelbrotFilter.uniforms.uZoom = this.uniforms.uZoom;
+                this.mandelbrotFilter.uniforms.uMaxIter = this.uniforms.uMaxIter;
+                this.mandelbrotFilter.uniforms.uPalette = this.uniforms.uPalette;
+
+                this.juliaFilter.uniforms.uCenter = this.uniforms.uCenter;
+                this.juliaFilter.uniforms.uZoom = this.uniforms.uZoom;
+                this.juliaFilter.uniforms.uMaxIter = this.uniforms.uMaxIter;
+                this.juliaFilter.uniforms.uPalette = this.uniforms.uPalette;
+                this.juliaFilter.uniforms.uJuliaC = [this.state.juliaC.x, this.state.juliaC.y];
+
+                this.newtonFilter.uniforms.uCenter = this.uniforms.uCenter;
+                this.newtonFilter.uniforms.uZoom = this.uniforms.uZoom;
+                this.newtonFilter.uniforms.uMaxIter = this.uniforms.uMaxIter;
+                this.newtonFilter.uniforms.uPalette = this.uniforms.uPalette;
+
+                if (this.state.fractal === 'barnsley') {
+                    // Update container transform for Barnsley instead of redrawing points
+                    const w = this.app.screen.width;
+                    const h = this.app.screen.height;
+                    const minDim = Math.min(w, h);
+
+                    // Base scale for the fern drawing (points are generated around 0,0)
+                    const drawingScale = 50.0; // Points are roughly in -3 to 3 range
+                    const zoomScale = this.state.zoom * (minDim / 10.0);
+
+                    // We need to position the container so that 'state.center' aligns with screen center
+                    // Container X = ScreenCenter X - (StateCenter X * ZoomScale)
+                    // Container Y = ScreenCenter Y - (StateCenter Y * ZoomScale * -1 due to flip)
+
+                    // To simplify: We want logical coordinate (cx, cy) to be at screen (w/2, h/2).
+                    // Graphics drawn with logic coordinates.
+                    // Scale = ZoomScale.
+
+                    this.barnsleyContainer.position.set(w / 2, h / 2);
+                    this.barnsleyContainer.scale.set(zoomScale, -zoomScale); // Flip Y
+
+                    // Pivot is the center point in logical coordinates
+                    this.barnsleyContainer.pivot.set(this.state.center.x, this.state.center.y + 5.0); // Offset 5.0 y as before
+
+                    // Only re-generate points if iterations changed
+                    if (this.lastBarnsleyIter !== this.state.iterations) {
+                        this.renderBarnsley();
+                    }
+                }
+            }
+
+            renderBarnsley() {
+                this.lastBarnsleyIter = this.state.iterations;
+                const g = this.barnsleyGraphics;
+                g.clear();
+
+                g.beginFill(0x00FF00, 0.5);
+
+                const iterations = this.state.iterations * 200; // Increased count slightly since it's one-time
+
+                let x = 0;
+                let y = 0;
+
+                // Draw in logical coordinates relative to Fern origin
+                for (let i = 0; i < iterations; i++) {
+                    let nextX, nextY;
+                    let r = Math.random();
+
+                    if (r < 0.01) {
+                        nextX = 0;
+                        nextY = 0.16 * y;
+                    } else if (r < 0.86) {
+                        nextX = 0.85 * x + 0.04 * y;
+                        nextY = -0.04 * x + 0.85 * y + 1.6;
+                    } else if (r < 0.93) {
+                        nextX = 0.2 * x - 0.26 * y;
+                        nextY = 0.23 * x + 0.22 * y + 1.6;
+                    } else {
+                        nextX = -0.15 * x + 0.28 * y;
+                        nextY = 0.26 * x + 0.24 * y + 0.44;
+                    }
+
+                    x = nextX;
+                    y = nextY;
+
+                    // Draw point in local space. Size needs to be small relative to scale
+                    // If scale is ~100, 1px is 0.01 units.
+                    // We draw a small rectangle.
+                    // Since we scale the container, drawing a 0.05x0.05 rect might be good?
+                    // Actually, PIXI Graphics line scale depends on setting.
+                    // Let's draw 1x1 rects and use inverse scale?
+                    // No, simpler: Draw points in a fixed larger coordinate system and scale down?
+                    // Or just use local coordinates and let Pixi scale it up.
+                    // If we draw a 0.02 width rect, and scale is 100, it becomes 2px.
+
+                    if (i > 20) { // Skip first few points
+                        g.drawRect(x, y, 0.01, 0.01);
+                    }
+                }
+                g.endFill();
+            }
+
+            bindEvents() {
+                // Mouse/Touch Interaction
+                let isDragging = false;
+                let lastPos = null;
+
+                const onDown = (e) => {
+                    isDragging = true;
+                    lastPos = { x: e.global.x, y: e.global.y };
+                };
+
+                const onMove = (e) => {
+                    if (!isDragging) return;
+                    const newPos = { x: e.global.x, y: e.global.y };
+                    const dx = newPos.x - lastPos.x;
+                    const dy = newPos.y - lastPos.y;
+
+                    // Adjust center based on zoom and screen size
+                    // Map screen pixels to complex plane units
+                    const scale = 3.0 / (this.state.zoom * Math.min(this.app.screen.width, this.app.screen.height));
+
+                    this.state.center.x -= dx * scale;
+                    this.state.center.y -= dy * scale; // Y is inverted in complex plane usually but here mapped directly from screen coords
+                    // Actually Y in WebGL is often flipped or not depending on context.
+                    // Let's assume standard coord system: -y moves up in screen (0,0 is top left) -> but we want to move window, so dragging mouse down (increasing y) should move view up (decreasing y center).
+                    // Actually: Dragging down moves the content down -> we are moving the "camera" up.
+                    // Drag down (+dy) -> we want to see what is above, so Center Y decreases. Correct.
+                    // But wait, if I drag the image down, I want the center to move UP? No.
+                    // If I drag the map to the right, I want to see what is on the left. So center x decreases.
+
+                    this.state.center.y += dy * scale; // WebGL coords (0,0 bottom left usually) vs Screen (0,0 top left).
+                    // Let's stick to standard behavior: Drag right -> Move view left (Center X decreases).
+                    // Drag Down -> Move view Up.
+                    // If I drag mouse right (+dx), I want to see left side. Center -= dx. Correct.
+                    // If I drag mouse down (+dy), I want to see top side. Screen Y is down. Complex Y is up.
+                    // Moving mouse down increases screen Y. This corresponds to decreasing Complex Y visually?
+                    // Let's test sign later.
+
+                    lastPos = newPos;
+                    this.updateUniforms();
+                };
+
+                const onUp = () => {
+                    isDragging = false;
+                    lastPos = null;
+                };
+
+                // Wheel Zoom
+                const onWheel = (e) => {
+                    e.preventDefault();
+                    const zoomFactor = 1.1;
+                    if (e.deltaY < 0) {
+                        this.state.zoom *= zoomFactor;
+                    } else {
+                        this.state.zoom /= zoomFactor;
+                    }
+                    // Update zoom slider UI
+                    document.getElementById('input-zoom').value = Math.log10(this.state.zoom); // Log scale for slider?
+                    document.getElementById('val-zoom').innerText = this.state.zoom.toFixed(2);
+
+                    this.updateUniforms();
+                };
+
+                this.fractalSprite.eventMode = 'static';
+                this.fractalSprite.on('pointerdown', onDown);
+                this.fractalSprite.on('globalpointermove', onMove);
+                this.fractalSprite.on('pointerup', onUp);
+                this.fractalSprite.on('pointerupoutside', onUp);
+
+                // Add wheel listener to canvas
+                this.app.view.addEventListener('wheel', onWheel, { passive: false });
+
+                // UI Controls
+                document.getElementById('select-fractal').addEventListener('change', (e) => {
+                    this.state.fractal = e.target.value;
+
+                    // Show/Hide Julia Controls
+                    if (this.state.fractal === 'julia') {
+                        document.getElementById('julia-controls').classList.remove('hidden');
+                    } else {
+                        document.getElementById('julia-controls').classList.add('hidden');
+                    }
+
+                    this.updateShader();
+                    this.updateUniforms();
+                });
+
+                document.getElementById('input-zoom').addEventListener('input', (e) => {
+                    // Logarithmic slider for better control
+                    // Let's assume slider value is log10(zoom)
+                    // Wait, simple slider 0.1 to 10000 is hard to use linearly.
+                    // Let's just map it linearly for now or switch to log logic if needed.
+                    // The HTML defined min=0.1 max=10000 step=0.1. Linear is painful.
+                    // Let's change the input to be cleaner in logic later or just use it raw.
+                    this.state.zoom = parseFloat(e.target.value);
+                    document.getElementById('val-zoom').innerText = this.state.zoom.toFixed(2);
+                    this.updateUniforms();
+                });
+
+                document.getElementById('input-iter').addEventListener('input', (e) => {
+                    this.state.iterations = parseInt(e.target.value);
+                    document.getElementById('val-iter').innerText = this.state.iterations;
+                    this.updateUniforms();
+                });
+
+                // Julia Inputs
+                document.getElementById('input-julia-re').addEventListener('input', (e) => {
+                    this.state.juliaC.x = parseFloat(e.target.value);
+                    this.updateUniforms();
+                });
+                document.getElementById('input-julia-im').addEventListener('input', (e) => {
+                    this.state.juliaC.y = parseFloat(e.target.value);
+                    this.updateUniforms();
+                });
+
+            }
+
+            setPalette(name) {
+                const map = { 'default': 0, 'fire': 1, 'forest': 2, 'bw': 3 };
+                this.state.palette = map[name] || 0;
+                this.updateUniforms();
+            }
+
+            // Persistence
+            saveSettings() {
+                localStorage.setItem('fractalSettings', JSON.stringify(this.state));
+            }
+
+            loadSettings() {
+                const saved = localStorage.getItem('fractalSettings');
+                if (saved) {
+                    const parsed = JSON.parse(saved);
+                    // Merge saved state cautiously
+                    this.state = { ...this.state, ...parsed };
+
+                    // Restore UI elements
+                    document.getElementById('select-fractal').value = this.state.fractal;
+                    document.getElementById('input-zoom').value = Math.log10(this.state.zoom) || 1; // Simplification
+                    document.getElementById('val-zoom').innerText = this.state.zoom.toFixed(2);
+                    document.getElementById('input-iter').value = this.state.iterations;
+                    document.getElementById('val-iter').innerText = this.state.iterations;
+                    document.getElementById('input-julia-re').value = this.state.juliaC.x;
+                    document.getElementById('input-julia-im').value = this.state.juliaC.y;
+
+                    // Show/Hide Julia
+                    if (this.state.fractal === 'julia') {
+                        document.getElementById('julia-controls').classList.remove('hidden');
+                    }
+
+                    this.updateShader();
+                    this.updateUniforms();
+                    this.renderFavoritesList();
+                }
+            }
+
+            addFavorite() {
+                const fav = {
+                    id: Date.now(),
+                    fractal: this.state.fractal,
+                    zoom: this.state.zoom,
+                    center: { ...this.state.center },
+                    iterations: this.state.iterations,
+                    palette: this.state.palette,
+                    juliaC: { ...this.state.juliaC },
+                    timestamp: new Date().toLocaleTimeString()
+                };
+                this.state.favorites.push(fav);
+                this.saveSettings();
+                this.renderFavoritesList();
+                alert('Saved to favorites!');
+            }
+
+            loadFavorite(id) {
+                const fav = this.state.favorites.find(f => f.id === id);
+                if (fav) {
+                    this.state.fractal = fav.fractal;
+                    this.state.zoom = fav.zoom;
+                    this.state.center = { ...fav.center };
+                    this.state.iterations = fav.iterations;
+                    this.state.palette = fav.palette;
+                    this.state.juliaC = { ...fav.juliaC };
+
+                    // Update UI to match
+                    document.getElementById('select-fractal').value = fav.fractal;
+                    document.getElementById('val-zoom').innerText = fav.zoom.toFixed(2);
+                    document.getElementById('input-iter').value = fav.iterations;
+                    document.getElementById('val-iter').innerText = fav.iterations;
+
+                    if (fav.fractal === 'julia') {
+                         document.getElementById('julia-controls').classList.remove('hidden');
+                         document.getElementById('input-julia-re').value = fav.juliaC.x;
+                         document.getElementById('input-julia-im').value = fav.juliaC.y;
+                    } else {
+                         document.getElementById('julia-controls').classList.add('hidden');
+                    }
+
+                    this.updateShader();
+                    this.updateUniforms();
+                }
+            }
+
+            removeFavorite(id) {
+                this.state.favorites = this.state.favorites.filter(f => f.id !== id);
+                this.saveSettings();
+                this.renderFavoritesList();
+            }
+
+            renderFavoritesList() {
+                const list = document.getElementById('favorites-list');
+                list.innerHTML = '';
+
+                if (this.state.favorites.length === 0) {
+                    list.innerHTML = '<div class="text-center text-xs text-gray-500 py-4">No favorites yet</div>';
+                    return;
+                }
+
+                this.state.favorites.forEach(fav => {
+                    const el = document.createElement('div');
+                    el.className = 'bg-white/10 p-2 rounded flex justify-between items-center';
+                    el.innerHTML = `
+                        <div class="cursor-pointer flex-1" onclick="window.fractalApp.loadFavorite(${fav.id})">
+                            <div class="text-xs font-bold capitalize">${fav.fractal}</div>
+                            <div class="text-[10px] text-gray-400">Zoom: ${fav.zoom.toFixed(1)} • ${fav.timestamp}</div>
+                        </div>
+                        <button onclick="window.fractalApp.removeFavorite(${fav.id})" class="text-red-400 hover:text-red-200 ml-2">&times;</button>
+                    `;
+                    list.appendChild(el);
+                });
+            }
+
+            exportImage() {
+                // Determine logic: We want high res?
+                // Pixi extract can pull from renderer.
+                this.app.renderer.extract.canvas(this.app.stage).toBlob((blob) => {
+                    const a = document.createElement('a');
+                    document.body.append(a);
+                    a.download = `fractal_${this.state.fractal}_${Date.now()}.png`;
+                    a.href = URL.createObjectURL(blob);
+                    a.click();
+                    a.remove();
+                }, 'image/png');
+            }
+        }
+
+        // Initialize
+        const app = new FractalApp();
+        // Global access for UI testing
+        window.fractalApp = app;
+
+        // Load Settings on start
+        try {
+            app.loadSettings();
+        } catch (e) {
+            console.error("Failed to load settings", e);
+        }
+
+        // Attach UI listeners for Favorites and Export which weren't in bindEvents
+        document.getElementById('btn-save-fav').addEventListener('click', () => app.addFavorite());
+        document.getElementById('btn-favorites').addEventListener('click', () => {
+             const panel = document.getElementById('favorites-panel');
+             if (panel.classList.contains('hidden')) {
+                 panel.classList.remove('hidden');
+                 panel.classList.add('flex');
+                 app.renderFavoritesList();
+             } else {
+                 panel.classList.add('hidden');
+                 panel.classList.remove('flex');
+             }
+        });
+        document.getElementById('btn-close-fav').addEventListener('click', () => {
+             const panel = document.getElementById('favorites-panel');
+             panel.classList.add('hidden');
+             panel.classList.remove('flex');
+        });
+
+        document.getElementById('btn-export').addEventListener('click', () => app.exportImage());
+
+        // Auto-save on unload
+        window.addEventListener('beforeunload', () => app.saveSettings());
+
+    </script>
+</body>
+</html>
