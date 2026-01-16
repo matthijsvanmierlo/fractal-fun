@@ -20,6 +20,11 @@
     <!-- PixiJS Container -->
     <div id="canvas-container" class="absolute inset-0 z-0"></div>
 
+    <!-- Export Frame Overlay (Hidden by default) -->
+    <div id="export-frame" class="absolute hidden border-2 border-dashed border-yellow-400 pointer-events-none z-50 shadow-[0_0_15px_rgba(255,255,0,0.5)]">
+        <div class="absolute top-2 left-2 bg-yellow-400 text-black text-[10px] font-bold px-1 rounded opacity-80">EXPORT AREA (16:9)</div>
+    </div>
+
     <!-- UI Container -->
     <div id="ui-container" class="absolute top-0 left-0 w-full h-full pointer-events-none z-10 flex flex-col justify-between p-4">
 
@@ -37,8 +42,8 @@
                 <button id="btn-favorites" class="bg-black/60 backdrop-blur-md hover:bg-white/10 p-2 rounded-lg border border-white/10 transition" title="View Favorites">
                     <svg class="w-5 h-5 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
                 </button>
-                <button id="btn-export" class="bg-black/60 backdrop-blur-md hover:bg-white/10 p-2 rounded-lg border border-white/10 transition" title="Export Image">
-                    <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                <button id="btn-reset" class="bg-black/60 backdrop-blur-md hover:bg-white/10 p-2 rounded-lg border border-white/10 transition" title="Reset View">
+                    <svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m-15.357-2a8.001 8.001 0 0015.357-2m0 0H15"></path></svg>
                 </button>
             </div>
         </div>
@@ -75,7 +80,7 @@
                             <span>Iterations / Detail</span>
                             <span id="val-iter">100</span>
                         </div>
-                        <input type="range" id="input-iter" min="10" max="1000" step="10" value="100" class="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer">
+                        <input type="range" id="input-iter" min="10" max="5000" step="10" value="100" class="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer">
                     </div>
                 </div>
 
@@ -105,8 +110,20 @@
                     </div>
                 </div>
 
+                <!-- Export Controls -->
+                <div class="border-t border-white/10 pt-2 space-y-2">
+                    <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider">Export</label>
+                    <div class="flex items-center gap-2">
+                         <input type="checkbox" id="check-export-frame" class="w-4 h-4 bg-white/20 rounded border-none">
+                         <span class="text-xs text-gray-300">Show Export Frame (16:9)</span>
+                    </div>
+                    <button id="btn-export-highres" class="w-full bg-blue-600/80 hover:bg-blue-600 text-white text-xs font-bold py-2 px-4 rounded transition">
+                        Export High-Res (4K)
+                    </button>
+                </div>
+
                 <div class="text-[10px] text-gray-500 pt-2">
-                    Drag to Pan • Scroll/Pinch to Zoom
+                    Drag/Arrows to Pan • Scroll/Pinch to Zoom
                 </div>
             </div>
         </div>
@@ -163,7 +180,7 @@
             }
         `;
 
-        // Shader Code Definitions
+        // Shader Code Definitions - Loops increased to 5000
         const mandelbrotFrag = `
             precision mediump float;
             varying vec2 vTextureCoord;
@@ -182,7 +199,7 @@
                 vec2 z = vec2(0.0);
                 int iter = 0;
 
-                for (int i = 0; i < 10000; i++) {
+                for (int i = 0; i < 5000; i++) {
                     if (i >= uMaxIter) break;
                     float x = (z.x * z.x - z.y * z.y) + c.x;
                     float y = (z.y * z.x + z.x * z.y) + c.y;
@@ -221,7 +238,7 @@
 
                 int iter = 0;
 
-                for (int i = 0; i < 10000; i++) {
+                for (int i = 0; i < 5000; i++) {
                     if (i >= uMaxIter) break;
                     float x = (z.x * z.x - z.y * z.y) + c.x;
                     float y = (z.y * z.x + z.x * z.y) + c.y;
@@ -267,13 +284,6 @@
                 vec2 uv = (gl_FragCoord.xy - uResolution.xy * 0.5) / min(uResolution.x, uResolution.y);
                 vec2 z = uCenter + uv * (3.0 / uZoom);
 
-                // f(z) = z^3 - 1
-                // f'(z) = 3z^2
-                // Newton iteration: z = z - f(z)/f'(z)
-                // z = z - (z^3 - 1) / (3z^2)
-                // z = z - (1/3) * (z - 1/z^2)
-                // Simplifies to: z = (2/3)*z + 1/(3*z^2)
-
                 int iter = 0;
                 vec2 roots[3];
                 roots[0] = vec2(1.0, 0.0);
@@ -283,7 +293,7 @@
                 float minDist = 100.0;
                 int rootIdx = -1;
 
-                for (int i = 0; i < 1000; i++) {
+                for (int i = 0; i < 5000; i++) {
                     if (i >= uMaxIter) break;
 
                     vec2 z2 = cmul(z, z);
@@ -293,12 +303,10 @@
                     // Denom: 3z^2
                     vec2 den = 3.0 * z2;
 
-                    // Safe divide?
-                    if (length(den) < 0.0001) break; // Singularity
+                    if (length(den) < 0.0001) break;
 
                     z = z - cdiv(num, den);
 
-                    // Check convergence to roots
                     for (int r = 0; r < 3; r++) {
                         float d = distance(z, roots[r]);
                         if (d < 0.001) {
@@ -311,7 +319,7 @@
                 }
 
                 if (rootIdx != -1) {
-                    float t = float(iter) / 50.0; // Newton converges fast usually
+                    float t = float(iter) / 50.0;
                     vec3 baseCol;
                     if (rootIdx == 0) baseCol = vec3(1.0, 0.2, 0.2);
                     else if (rootIdx == 1) baseCol = vec3(0.2, 1.0, 0.2);
@@ -338,7 +346,8 @@
 
                 document.getElementById('canvas-container').appendChild(this.app.view);
 
-                this.state = {
+                // Default state
+                this.defaultState = {
                     fractal: 'mandelbrot',
                     zoom: 1.0,
                     center: { x: -0.5, y: 0.0 },
@@ -347,6 +356,9 @@
                     juliaC: { x: -0.7, y: 0.27015 },
                     favorites: []
                 };
+
+                this.state = JSON.parse(JSON.stringify(this.defaultState));
+                this.showExportFrame = false;
 
                 // Filter container
                 this.fractalContainer = new PIXI.Container();
@@ -370,7 +382,7 @@
                 this.juliaFilter = new PIXI.Filter(vertexShader, juliaFrag, { ...this.uniforms, uJuliaC: [this.state.juliaC.x, this.state.juliaC.y] });
                 this.newtonFilter = new PIXI.Filter(vertexShader, newtonFrag, this.uniforms);
 
-                // Barnsley Fern Container (Particle System)
+                // Barnsley Fern Container
                 this.barnsleyContainer = new PIXI.Container();
                 this.barnsleyGraphics = new PIXI.Graphics();
                 this.barnsleyContainer.addChild(this.barnsleyGraphics);
@@ -389,11 +401,32 @@
                     this.fractalSprite.width = this.app.screen.width;
                     this.fractalSprite.height = this.app.screen.height;
                     this.uniforms.uResolution = [this.app.screen.width, this.app.screen.height];
+                    this.updateExportFrame();
                 });
             }
 
+            resetView() {
+                // Keep favorites, reset other view params
+                const favs = this.state.favorites;
+                this.state = JSON.parse(JSON.stringify(this.defaultState));
+                this.state.favorites = favs;
+
+                // Update UI
+                document.getElementById('select-fractal').value = this.state.fractal;
+                document.getElementById('input-zoom').value = 1.0;
+                document.getElementById('val-zoom').innerText = "1.00";
+                document.getElementById('input-iter').value = this.state.iterations;
+                document.getElementById('val-iter').innerText = this.state.iterations;
+                document.getElementById('input-julia-re').value = this.state.juliaC.x;
+                document.getElementById('input-julia-im').value = this.state.juliaC.y;
+                document.getElementById('julia-controls').classList.add('hidden');
+
+                this.updateShader();
+                this.updateUniforms();
+                this.saveSettings();
+            }
+
             updateShader() {
-                // Reset visibility
                 this.fractalContainer.visible = true;
                 this.barnsleyContainer.visible = false;
                 this.fractalContainer.filters = [];
@@ -412,13 +445,11 @@
             }
 
             updateUniforms() {
-                // Sync uniforms object with state
                 this.uniforms.uCenter = [this.state.center.x, this.state.center.y];
                 this.uniforms.uZoom = this.state.zoom;
                 this.uniforms.uMaxIter = this.state.iterations;
                 this.uniforms.uPalette = this.state.palette;
 
-                // Update specific filter uniforms
                 this.mandelbrotFilter.uniforms.uCenter = this.uniforms.uCenter;
                 this.mandelbrotFilter.uniforms.uZoom = this.uniforms.uZoom;
                 this.mandelbrotFilter.uniforms.uMaxIter = this.uniforms.uMaxIter;
@@ -436,30 +467,14 @@
                 this.newtonFilter.uniforms.uPalette = this.uniforms.uPalette;
 
                 if (this.state.fractal === 'barnsley') {
-                    // Update container transform for Barnsley instead of redrawing points
                     const w = this.app.screen.width;
                     const h = this.app.screen.height;
                     const minDim = Math.min(w, h);
-
-                    // Base scale for the fern drawing (points are generated around 0,0)
-                    const drawingScale = 50.0; // Points are roughly in -3 to 3 range
                     const zoomScale = this.state.zoom * (minDim / 10.0);
-
-                    // We need to position the container so that 'state.center' aligns with screen center
-                    // Container X = ScreenCenter X - (StateCenter X * ZoomScale)
-                    // Container Y = ScreenCenter Y - (StateCenter Y * ZoomScale * -1 due to flip)
-
-                    // To simplify: We want logical coordinate (cx, cy) to be at screen (w/2, h/2).
-                    // Graphics drawn with logic coordinates.
-                    // Scale = ZoomScale.
-
                     this.barnsleyContainer.position.set(w / 2, h / 2);
-                    this.barnsleyContainer.scale.set(zoomScale, -zoomScale); // Flip Y
+                    this.barnsleyContainer.scale.set(zoomScale, -zoomScale);
+                    this.barnsleyContainer.pivot.set(this.state.center.x, this.state.center.y + 5.0);
 
-                    // Pivot is the center point in logical coordinates
-                    this.barnsleyContainer.pivot.set(this.state.center.x, this.state.center.y + 5.0); // Offset 5.0 y as before
-
-                    // Only re-generate points if iterations changed
                     if (this.lastBarnsleyIter !== this.state.iterations) {
                         this.renderBarnsley();
                     }
@@ -470,55 +485,52 @@
                 this.lastBarnsleyIter = this.state.iterations;
                 const g = this.barnsleyGraphics;
                 g.clear();
-
                 g.beginFill(0x00FF00, 0.5);
-
-                const iterations = this.state.iterations * 200; // Increased count slightly since it's one-time
-
-                let x = 0;
-                let y = 0;
-
-                // Draw in logical coordinates relative to Fern origin
+                const iterations = this.state.iterations * 200;
+                let x = 0; let y = 0;
                 for (let i = 0; i < iterations; i++) {
                     let nextX, nextY;
                     let r = Math.random();
-
-                    if (r < 0.01) {
-                        nextX = 0;
-                        nextY = 0.16 * y;
-                    } else if (r < 0.86) {
-                        nextX = 0.85 * x + 0.04 * y;
-                        nextY = -0.04 * x + 0.85 * y + 1.6;
-                    } else if (r < 0.93) {
-                        nextX = 0.2 * x - 0.26 * y;
-                        nextY = 0.23 * x + 0.22 * y + 1.6;
-                    } else {
-                        nextX = -0.15 * x + 0.28 * y;
-                        nextY = 0.26 * x + 0.24 * y + 0.44;
-                    }
-
-                    x = nextX;
-                    y = nextY;
-
-                    // Draw point in local space. Size needs to be small relative to scale
-                    // If scale is ~100, 1px is 0.01 units.
-                    // We draw a small rectangle.
-                    // Since we scale the container, drawing a 0.05x0.05 rect might be good?
-                    // Actually, PIXI Graphics line scale depends on setting.
-                    // Let's draw 1x1 rects and use inverse scale?
-                    // No, simpler: Draw points in a fixed larger coordinate system and scale down?
-                    // Or just use local coordinates and let Pixi scale it up.
-                    // If we draw a 0.02 width rect, and scale is 100, it becomes 2px.
-
-                    if (i > 20) { // Skip first few points
-                        g.drawRect(x, y, 0.01, 0.01);
-                    }
+                    if (r < 0.01) { nextX = 0; nextY = 0.16 * y; }
+                    else if (r < 0.86) { nextX = 0.85 * x + 0.04 * y; nextY = -0.04 * x + 0.85 * y + 1.6; }
+                    else if (r < 0.93) { nextX = 0.2 * x - 0.26 * y; nextY = 0.23 * x + 0.22 * y + 1.6; }
+                    else { nextX = -0.15 * x + 0.28 * y; nextY = 0.26 * x + 0.24 * y + 0.44; }
+                    x = nextX; y = nextY;
+                    if (i > 20) g.drawRect(x, y, 0.01, 0.01);
                 }
                 g.endFill();
             }
 
+            updateExportFrame() {
+                const frame = document.getElementById('export-frame');
+                if (!this.showExportFrame) {
+                    frame.classList.add('hidden');
+                    return;
+                }
+
+                // We want 16:9 box centered
+                const sw = this.app.screen.width;
+                const sh = this.app.screen.height;
+                const aspect = 16/9;
+
+                let w = sw * 0.9;
+                let h = w / aspect;
+
+                if (h > sh * 0.9) {
+                    h = sh * 0.9;
+                    w = h * aspect;
+                }
+
+                frame.style.width = `${w}px`;
+                frame.style.height = `${h}px`;
+                frame.style.left = `${(sw - w)/2}px`;
+                frame.style.top = `${(sh - h)/2}px`;
+
+                frame.classList.remove('hidden');
+            }
+
             bindEvents() {
-                // Mouse/Touch Interaction
+                // Mouse Drag
                 let isDragging = false;
                 let lastPos = null;
 
@@ -532,52 +544,68 @@
                     const newPos = { x: e.global.x, y: e.global.y };
                     const dx = newPos.x - lastPos.x;
                     const dy = newPos.y - lastPos.y;
-
-                    // Adjust center based on zoom and screen size
-                    // Map screen pixels to complex plane units
                     const scale = 3.0 / (this.state.zoom * Math.min(this.app.screen.width, this.app.screen.height));
 
                     this.state.center.x -= dx * scale;
-                    this.state.center.y -= dy * scale; // Y is inverted in complex plane usually but here mapped directly from screen coords
-                    // Actually Y in WebGL is often flipped or not depending on context.
-                    // Let's assume standard coord system: -y moves up in screen (0,0 is top left) -> but we want to move window, so dragging mouse down (increasing y) should move view up (decreasing y center).
-                    // Actually: Dragging down moves the content down -> we are moving the "camera" up.
-                    // Drag down (+dy) -> we want to see what is above, so Center Y decreases. Correct.
-                    // But wait, if I drag the image down, I want the center to move UP? No.
-                    // If I drag the map to the right, I want to see what is on the left. So center x decreases.
-
-                    this.state.center.y += dy * scale; // WebGL coords (0,0 bottom left usually) vs Screen (0,0 top left).
-                    // Let's stick to standard behavior: Drag right -> Move view left (Center X decreases).
-                    // Drag Down -> Move view Up.
-                    // If I drag mouse right (+dx), I want to see left side. Center -= dx. Correct.
-                    // If I drag mouse down (+dy), I want to see top side. Screen Y is down. Complex Y is up.
-                    // Moving mouse down increases screen Y. This corresponds to decreasing Complex Y visually?
-                    // Let's test sign later.
-
+                    this.state.center.y += dy * scale;
                     lastPos = newPos;
                     this.updateUniforms();
                 };
 
-                const onUp = () => {
-                    isDragging = false;
-                    lastPos = null;
-                };
+                const onUp = () => { isDragging = false; lastPos = null; };
 
-                // Wheel Zoom
+                // Cursor-Centered Zoom
                 const onWheel = (e) => {
                     e.preventDefault();
+                    const rect = this.app.view.getBoundingClientRect();
+                    const mx = e.clientX - rect.left;
+                    const my = e.clientY - rect.top;
+                    const w = this.app.screen.width;
+                    const h = this.app.screen.height;
+                    const minDim = Math.min(w, h);
+
+                    // Current mouse pos in UV-normalized centered coords (Y inverted relative to screen)
+                    // uv.x = (mx - w/2) / minDim
+                    // uv.y = (h/2 - my) / minDim
+                    const u = (mx - w * 0.5) / minDim;
+                    const v = (h * 0.5 - my) / minDim;
+
+                    const oldZoom = this.state.zoom;
                     const zoomFactor = 1.1;
+
                     if (e.deltaY < 0) {
                         this.state.zoom *= zoomFactor;
                     } else {
                         this.state.zoom /= zoomFactor;
                     }
-                    // Update zoom slider UI
-                    document.getElementById('input-zoom').value = Math.log10(this.state.zoom); // Log scale for slider?
+
+                    // Adjust center to keep mouse world position stationary
+                    // CenterNew = CenterOld + (UV) * (3.0/ZoomOld - 3.0/ZoomNew)
+                    const term = 3.0 * (1.0/oldZoom - 1.0/this.state.zoom);
+                    this.state.center.x += u * term;
+                    this.state.center.y += v * term;
+
+                    document.getElementById('input-zoom').value = this.state.zoom;
                     document.getElementById('val-zoom').innerText = this.state.zoom.toFixed(2);
 
                     this.updateUniforms();
                 };
+
+                // Keyboard Panning
+                window.addEventListener('keydown', (e) => {
+                    const minDim = Math.min(this.app.screen.width, this.app.screen.height);
+                    const scale = 3.0 / (this.state.zoom * minDim);
+                    const stepPixels = 50; // Move 50 pixels worth
+                    const moveStep = stepPixels * scale;
+
+                    if (e.key === 'ArrowUp') this.state.center.y += moveStep;
+                    else if (e.key === 'ArrowDown') this.state.center.y -= moveStep;
+                    else if (e.key === 'ArrowLeft') this.state.center.x -= moveStep;
+                    else if (e.key === 'ArrowRight') this.state.center.x += moveStep;
+                    else return;
+
+                    this.updateUniforms();
+                });
 
                 this.fractalSprite.eventMode = 'static';
                 this.fractalSprite.on('pointerdown', onDown);
@@ -585,31 +613,18 @@
                 this.fractalSprite.on('pointerup', onUp);
                 this.fractalSprite.on('pointerupoutside', onUp);
 
-                // Add wheel listener to canvas
                 this.app.view.addEventListener('wheel', onWheel, { passive: false });
 
                 // UI Controls
                 document.getElementById('select-fractal').addEventListener('change', (e) => {
                     this.state.fractal = e.target.value;
-
-                    // Show/Hide Julia Controls
-                    if (this.state.fractal === 'julia') {
-                        document.getElementById('julia-controls').classList.remove('hidden');
-                    } else {
-                        document.getElementById('julia-controls').classList.add('hidden');
-                    }
-
+                    if (this.state.fractal === 'julia') document.getElementById('julia-controls').classList.remove('hidden');
+                    else document.getElementById('julia-controls').classList.add('hidden');
                     this.updateShader();
                     this.updateUniforms();
                 });
 
                 document.getElementById('input-zoom').addEventListener('input', (e) => {
-                    // Logarithmic slider for better control
-                    // Let's assume slider value is log10(zoom)
-                    // Wait, simple slider 0.1 to 10000 is hard to use linearly.
-                    // Let's just map it linearly for now or switch to log logic if needed.
-                    // The HTML defined min=0.1 max=10000 step=0.1. Linear is painful.
-                    // Let's change the input to be cleaner in logic later or just use it raw.
                     this.state.zoom = parseFloat(e.target.value);
                     document.getElementById('val-zoom').innerText = this.state.zoom.toFixed(2);
                     this.updateUniforms();
@@ -621,7 +636,6 @@
                     this.updateUniforms();
                 });
 
-                // Julia Inputs
                 document.getElementById('input-julia-re').addEventListener('input', (e) => {
                     this.state.juliaC.x = parseFloat(e.target.value);
                     this.updateUniforms();
@@ -631,6 +645,11 @@
                     this.updateUniforms();
                 });
 
+                // Export Frame Toggle
+                document.getElementById('check-export-frame').addEventListener('change', (e) => {
+                    this.showExportFrame = e.target.checked;
+                    this.updateExportFrame();
+                });
             }
 
             setPalette(name) {
@@ -639,7 +658,6 @@
                 this.updateUniforms();
             }
 
-            // Persistence
             saveSettings() {
                 localStorage.setItem('fractalSettings', JSON.stringify(this.state));
             }
@@ -648,23 +666,15 @@
                 const saved = localStorage.getItem('fractalSettings');
                 if (saved) {
                     const parsed = JSON.parse(saved);
-                    // Merge saved state cautiously
                     this.state = { ...this.state, ...parsed };
-
-                    // Restore UI elements
                     document.getElementById('select-fractal').value = this.state.fractal;
-                    document.getElementById('input-zoom').value = Math.log10(this.state.zoom) || 1; // Simplification
+                    document.getElementById('input-zoom').value = this.state.zoom;
                     document.getElementById('val-zoom').innerText = this.state.zoom.toFixed(2);
                     document.getElementById('input-iter').value = this.state.iterations;
                     document.getElementById('val-iter').innerText = this.state.iterations;
                     document.getElementById('input-julia-re').value = this.state.juliaC.x;
                     document.getElementById('input-julia-im').value = this.state.juliaC.y;
-
-                    // Show/Hide Julia
-                    if (this.state.fractal === 'julia') {
-                        document.getElementById('julia-controls').classList.remove('hidden');
-                    }
-
+                    if (this.state.fractal === 'julia') document.getElementById('julia-controls').classList.remove('hidden');
                     this.updateShader();
                     this.updateUniforms();
                     this.renderFavoritesList();
@@ -698,19 +708,16 @@
                     this.state.palette = fav.palette;
                     this.state.juliaC = { ...fav.juliaC };
 
-                    // Update UI to match
                     document.getElementById('select-fractal').value = fav.fractal;
                     document.getElementById('val-zoom').innerText = fav.zoom.toFixed(2);
+                    document.getElementById('input-zoom').value = fav.zoom;
                     document.getElementById('input-iter').value = fav.iterations;
                     document.getElementById('val-iter').innerText = fav.iterations;
-
                     if (fav.fractal === 'julia') {
                          document.getElementById('julia-controls').classList.remove('hidden');
                          document.getElementById('input-julia-re').value = fav.juliaC.x;
                          document.getElementById('input-julia-im').value = fav.juliaC.y;
-                    } else {
-                         document.getElementById('julia-controls').classList.add('hidden');
-                    }
+                    } else document.getElementById('julia-controls').classList.add('hidden');
 
                     this.updateShader();
                     this.updateUniforms();
@@ -726,12 +733,10 @@
             renderFavoritesList() {
                 const list = document.getElementById('favorites-list');
                 list.innerHTML = '';
-
                 if (this.state.favorites.length === 0) {
                     list.innerHTML = '<div class="text-center text-xs text-gray-500 py-4">No favorites yet</div>';
                     return;
                 }
-
                 this.state.favorites.forEach(fav => {
                     const el = document.createElement('div');
                     el.className = 'bg-white/10 p-2 rounded flex justify-between items-center';
@@ -746,33 +751,89 @@
                 });
             }
 
-            exportImage() {
-                // Determine logic: We want high res?
-                // Pixi extract can pull from renderer.
-                this.app.renderer.extract.canvas(this.app.stage).toBlob((blob) => {
+            exportHighRes() {
+                // Target: 4K (16:9)
+                const targetW = 3840;
+                const targetH = 2160;
+
+                // If the export frame is shown, we want to match its content.
+                // If not shown, we default to matching what is visible on screen as best as possible (fitting width or height).
+                // Let's assume we always want to match what the 'Export Frame' WOULD show.
+
+                // On Screen Logic:
+                const sw = this.app.screen.width;
+                const sh = this.app.screen.height;
+                const sMin = Math.min(sw, sh);
+
+                // Export Frame Overlay dimensions
+                const aspect = 16/9;
+                let frameW = sw * 0.9;
+                let frameH = frameW / aspect;
+                if (frameH > sh * 0.9) {
+                    frameH = sh * 0.9;
+                    frameW = frameH * aspect;
+                }
+
+                // Calculate Adjusted Zoom
+                // World Height of Overlay = FrameH * (3.0 / (Zoom * sMin))
+                // World Height of Target = 3.0 / ExportZoom  (since Target H is min dim for 16:9)
+                // Equalize: FrameH / (Zoom * sMin) = 1 / ExportZoom
+                // ExportZoom = (Zoom * sMin) / FrameH
+
+                const exportZoom = (this.state.zoom * sMin) / frameH;
+
+                // Prepare Render Texture
+                const renderTexture = PIXI.RenderTexture.create({ width: targetW, height: targetH });
+
+                // Setup specific filter for export
+                const uniforms = {
+                     uResolution: [targetW, targetH],
+                     uCenter: [this.state.center.x, this.state.center.y],
+                     uZoom: exportZoom,
+                     uMaxIter: this.state.iterations,
+                     uPalette: this.state.palette,
+                     uJuliaC: [this.state.juliaC.x, this.state.juliaC.y]
+                };
+
+                let filter;
+                if (this.state.fractal === 'mandelbrot') filter = new PIXI.Filter(vertexShader, mandelbrotFrag, uniforms);
+                else if (this.state.fractal === 'julia') filter = new PIXI.Filter(vertexShader, juliaFrag, uniforms);
+                else if (this.state.fractal === 'newton') filter = new PIXI.Filter(vertexShader, newtonFrag, uniforms);
+                else {
+                    // Barnsley not supported for high-res shader export easily in this pipeline without logic duplication
+                    alert("High-res export not fully supported for Barnsley Fern yet.");
+                    return;
+                }
+
+                const sprite = new PIXI.Sprite(PIXI.Texture.WHITE);
+                sprite.width = targetW;
+                sprite.height = targetH;
+                sprite.filters = [filter];
+
+                // Render
+                this.app.renderer.render(sprite, { renderTexture });
+
+                // Extract
+                this.app.renderer.extract.canvas(renderTexture).toBlob((blob) => {
                     const a = document.createElement('a');
                     document.body.append(a);
-                    a.download = `fractal_${this.state.fractal}_${Date.now()}.png`;
+                    a.download = `fractal_4k_${Date.now()}.png`;
                     a.href = URL.createObjectURL(blob);
                     a.click();
                     a.remove();
+
+                    // Cleanup
+                    renderTexture.destroy(true);
+                    sprite.destroy();
                 }, 'image/png');
             }
         }
 
-        // Initialize
         const app = new FractalApp();
-        // Global access for UI testing
         window.fractalApp = app;
 
-        // Load Settings on start
-        try {
-            app.loadSettings();
-        } catch (e) {
-            console.error("Failed to load settings", e);
-        }
+        try { app.loadSettings(); } catch (e) { console.error(e); }
 
-        // Attach UI listeners for Favorites and Export which weren't in bindEvents
         document.getElementById('btn-save-fav').addEventListener('click', () => app.addFavorite());
         document.getElementById('btn-favorites').addEventListener('click', () => {
              const panel = document.getElementById('favorites-panel');
@@ -791,9 +852,17 @@
              panel.classList.remove('flex');
         });
 
-        document.getElementById('btn-export').addEventListener('click', () => app.exportImage());
+        document.getElementById('btn-export-highres').addEventListener('click', () => app.exportHighRes());
+        document.getElementById('btn-reset').addEventListener('click', () => app.resetView());
 
-        // Auto-save on unload
+        // Removed old btn-export in favor of highres, or keeping it?
+        // HTML has btn-export but I didn't update the binding in the new script block?
+        // Wait, the HTML I wrote above removed `btn-export` and added `btn-reset` in the top bar?
+        // No, `btn-export` is gone from top bar in my HTML above?
+        // Let's check the HTML string.
+        // The top bar has: btn-save-fav, btn-favorites, btn-reset.
+        // The export is now in the sidebar under "Export".
+
         window.addEventListener('beforeunload', () => app.saveSettings());
 
     </script>
