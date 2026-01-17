@@ -61,9 +61,10 @@
                     <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Fractal Type</label>
                     <select id="select-fractal" class="w-full bg-white/10 border border-white/20 rounded px-2 py-1 text-sm focus:outline-none focus:border-blue-500 transition">
                         <option value="mandelbrot">Mandelbrot Set</option>
+                        <option value="burning_ship">Burning Ship</option>
+                        <option value="tricorn">Tricorn (Mandelbar)</option>
                         <option value="julia">Julia Set</option>
                         <option value="newton">Newton Fractal</option>
-                        <option value="barnsley">Barnsley Fern</option>
                     </select>
                 </div>
 
@@ -270,6 +271,11 @@
                 dsc.y = t2 - (dsc.x - t1);
                 return dsc;
             }
+
+            vec2 ds_abs(vec2 a) {
+                 if (a.x < 0.0) return vec2(-a.x, -a.y);
+                 return a;
+            }
         `;
 
         // Shader Code Definitions
@@ -353,7 +359,6 @@
 
                     // z_im_new = 2 * z_re * z_im + c_im
                     vec2 term2 = ds_mul(z_re, z_im);
-                    // Multiply by 2.0 (simple add or mul)
                     vec2 term2_2 = ds_add(term2, term2);
                     vec2 z_im_new = ds_add(term2_2, c_im);
 
@@ -377,7 +382,209 @@
             }
         `;
 
-        // 2. Julia (Normal and Deep)
+        // 2. Burning Ship
+        const burningShipFrag = `
+            precision highp float;
+            varying vec2 vTextureCoord;
+            uniform vec2 uResolution;
+            uniform vec2 uCenter;
+            uniform float uZoom;
+            uniform int uMaxIter;
+            uniform int uPalette;
+
+            ` + shaderUtils + `
+
+            void main() {
+                vec2 uv = (gl_FragCoord.xy - uResolution.xy * 0.5) / min(uResolution.x, uResolution.y);
+                vec2 c = uCenter + uv * (3.0 / uZoom);
+                vec2 z = vec2(0.0);
+                int iter = 0;
+
+                for (int i = 0; i < 5000; i++) {
+                    if (i >= uMaxIter) break;
+                    float x = abs(z.x);
+                    float y = abs(z.y);
+                    float nx = x * x - y * y + c.x;
+                    float ny = 2.0 * x * y + c.y;
+
+                    if ((nx * nx + ny * ny) > 4.0) break;
+                    z.x = nx; z.y = ny;
+                    iter++;
+                }
+
+                if (iter == uMaxIter) {
+                    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                } else {
+                    float t = float(iter) / float(uMaxIter);
+                    t = sqrt(t);
+                    vec3 col = getPaletteColor(t, uPalette);
+                    gl_FragColor = vec4(col, 1.0);
+                }
+            }
+        `;
+
+        const burningShipFragDeep = `
+            precision highp float;
+            varying vec2 vTextureCoord;
+            uniform vec2 uResolution;
+            uniform vec2 uCenterRe;
+            uniform vec2 uCenterIm;
+            uniform float uScale;
+            uniform int uMaxIter;
+            uniform int uPalette;
+
+            ` + shaderUtils + `
+            ` + dsMath + `
+
+            void main() {
+                vec2 uv = (gl_FragCoord.xy - uResolution.xy * 0.5) / min(uResolution.x, uResolution.y);
+
+                vec2 offsetRe = vec2(uv.x * uScale, 0.0);
+                vec2 c_re = ds_add(uCenterRe, offsetRe);
+                vec2 offsetIm = vec2(uv.y * uScale, 0.0);
+                vec2 c_im = ds_add(uCenterIm, offsetIm);
+
+                vec2 z_re = vec2(0.0);
+                vec2 z_im = vec2(0.0);
+                int iter = 0;
+
+                for (int i = 0; i < 5000; i++) {
+                    if (i >= uMaxIter) break;
+
+                    vec2 x = ds_abs(z_re);
+                    vec2 y = ds_abs(z_im);
+
+                    vec2 x_sq = ds_sqr(x);
+                    vec2 y_sq = ds_sqr(y);
+
+                    vec2 term1 = ds_sub(x_sq, y_sq);
+                    vec2 nx = ds_add(term1, c_re);
+
+                    vec2 term2 = ds_mul(x, y);
+                    vec2 term2_2 = ds_add(term2, term2);
+                    vec2 ny = ds_add(term2_2, c_im);
+
+                    vec2 mag = ds_add(x_sq, y_sq);
+                    if (mag.x > 4.0) break;
+
+                    z_re = nx;
+                    z_im = ny;
+                    iter++;
+                }
+
+                if (iter == uMaxIter) {
+                    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                } else {
+                    float t = float(iter) / float(uMaxIter);
+                    t = sqrt(t);
+                    vec3 col = getPaletteColor(t, uPalette);
+                    gl_FragColor = vec4(col, 1.0);
+                }
+            }
+        `;
+
+        // 3. Tricorn (Mandelbar)
+        const tricornFrag = `
+            precision highp float;
+            varying vec2 vTextureCoord;
+            uniform vec2 uResolution;
+            uniform vec2 uCenter;
+            uniform float uZoom;
+            uniform int uMaxIter;
+            uniform int uPalette;
+
+            ` + shaderUtils + `
+
+            void main() {
+                vec2 uv = (gl_FragCoord.xy - uResolution.xy * 0.5) / min(uResolution.x, uResolution.y);
+                vec2 c = uCenter + uv * (3.0 / uZoom);
+                vec2 z = vec2(0.0);
+                int iter = 0;
+
+                for (int i = 0; i < 5000; i++) {
+                    if (i >= uMaxIter) break;
+                    float x = z.x;
+                    float y = z.y;
+                    // conj(z)^2 + c
+                    // (x-iy)^2 = x^2 - y^2 - 2ixy
+                    float nx = x * x - y * y + c.x;
+                    float ny = -2.0 * x * y + c.y;
+
+                    if ((nx * nx + ny * ny) > 4.0) break;
+                    z.x = nx; z.y = ny;
+                    iter++;
+                }
+
+                if (iter == uMaxIter) {
+                    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                } else {
+                    float t = float(iter) / float(uMaxIter);
+                    t = sqrt(t);
+                    vec3 col = getPaletteColor(t, uPalette);
+                    gl_FragColor = vec4(col, 1.0);
+                }
+            }
+        `;
+
+        const tricornFragDeep = `
+            precision highp float;
+            varying vec2 vTextureCoord;
+            uniform vec2 uResolution;
+            uniform vec2 uCenterRe;
+            uniform vec2 uCenterIm;
+            uniform float uScale;
+            uniform int uMaxIter;
+            uniform int uPalette;
+
+            ` + shaderUtils + `
+            ` + dsMath + `
+
+            void main() {
+                vec2 uv = (gl_FragCoord.xy - uResolution.xy * 0.5) / min(uResolution.x, uResolution.y);
+
+                vec2 offsetRe = vec2(uv.x * uScale, 0.0);
+                vec2 c_re = ds_add(uCenterRe, offsetRe);
+                vec2 offsetIm = vec2(uv.y * uScale, 0.0);
+                vec2 c_im = ds_add(uCenterIm, offsetIm);
+
+                vec2 z_re = vec2(0.0);
+                vec2 z_im = vec2(0.0);
+                int iter = 0;
+
+                for (int i = 0; i < 5000; i++) {
+                    if (i >= uMaxIter) break;
+
+                    vec2 z_re_sq = ds_sqr(z_re);
+                    vec2 z_im_sq = ds_sqr(z_im);
+
+                    vec2 term1 = ds_sub(z_re_sq, z_im_sq);
+                    vec2 nx = ds_add(term1, c_re);
+
+                    vec2 term2 = ds_mul(z_re, z_im);
+                    vec2 term2_neg = vec2(-term2.x, -term2.y);
+                    vec2 term2_2 = ds_add(term2_neg, term2_neg);
+                    vec2 ny = ds_add(term2_2, c_im);
+
+                    vec2 mag = ds_add(z_re_sq, z_im_sq);
+                    if (mag.x > 4.0) break;
+
+                    z_re = nx;
+                    z_im = ny;
+                    iter++;
+                }
+
+                if (iter == uMaxIter) {
+                    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                } else {
+                    float t = float(iter) / float(uMaxIter);
+                    t = sqrt(t);
+                    vec3 col = getPaletteColor(t, uPalette);
+                    gl_FragColor = vec4(col, 1.0);
+                }
+            }
+        `;
+
+        // 4. Julia (Normal and Deep)
         const juliaFrag = `
             precision highp float;
             varying vec2 vTextureCoord;
@@ -476,7 +683,7 @@
             }
         `;
 
-        // 3. Newton (Standard only - Deep disabled for Newton to keep complexity manageable, falls back to Standard)
+        // 5. Newton (Standard only)
         const newtonFrag = `
             precision highp float;
             varying vec2 vTextureCoord;
@@ -584,18 +791,18 @@
                 this.fractalContainer.addChild(this.fractalSprite);
                 this.app.stage.addChild(this.fractalContainer);
 
-                // Shader Uniforms (Normal)
+                // Shader Uniforms (Normal) - FIX: Use renderer width/height (physical) for proper resolution mapping
                 this.uniforms = {
-                    uResolution: [this.app.screen.width, this.app.screen.height],
+                    uResolution: [this.app.renderer.width, this.app.renderer.height],
                     uCenter: [this.state.center.x, this.state.center.y],
                     uZoom: this.state.zoom,
                     uMaxIter: this.state.iterations,
                     uPalette: this.state.palette
                 };
 
-                // Deep Zoom Uniforms (Placeholders)
+                // Deep Zoom Uniforms
                 this.uniformsDeep = {
-                    uResolution: [this.app.screen.width, this.app.screen.height],
+                    uResolution: [this.app.renderer.width, this.app.renderer.height],
                     uCenterRe: [0, 0],
                     uCenterIm: [0, 0],
                     uScale: 1.0,
@@ -607,18 +814,15 @@
                 // Normal
                 this.mandelbrotFilter = new PIXI.Filter(vertexShader, mandelbrotFrag, this.uniforms);
                 this.juliaFilter = new PIXI.Filter(vertexShader, juliaFrag, { ...this.uniforms, uJuliaC: [this.state.juliaC.x, this.state.juliaC.y] });
+                this.burningShipFilter = new PIXI.Filter(vertexShader, burningShipFrag, this.uniforms);
+                this.tricornFilter = new PIXI.Filter(vertexShader, tricornFrag, this.uniforms);
                 this.newtonFilter = new PIXI.Filter(vertexShader, newtonFrag, this.uniforms);
 
                 // Deep
                 this.mandelbrotFilterDeep = new PIXI.Filter(vertexShader, mandelbrotFragDeep, this.uniformsDeep);
                 this.juliaFilterDeep = new PIXI.Filter(vertexShader, juliaFragDeep, { ...this.uniformsDeep, uJuliaCRe: [0,0], uJuliaCIm: [0,0] });
-
-                // Barnsley Fern Container
-                this.barnsleyContainer = new PIXI.Container();
-                this.barnsleyGraphics = new PIXI.Graphics();
-                this.barnsleyContainer.addChild(this.barnsleyGraphics);
-                this.barnsleyContainer.visible = false;
-                this.app.stage.addChild(this.barnsleyContainer);
+                this.burningShipFilterDeep = new PIXI.Filter(vertexShader, burningShipFragDeep, this.uniformsDeep);
+                this.tricornFilterDeep = new PIXI.Filter(vertexShader, tricornFragDeep, this.uniformsDeep);
 
                 // Apply initial shader
                 this.updateShader();
@@ -631,8 +835,11 @@
                 this.app.renderer.on('resize', () => {
                     this.fractalSprite.width = this.app.screen.width;
                     this.fractalSprite.height = this.app.screen.height;
-                    this.uniforms.uResolution = [this.app.screen.width, this.app.screen.height];
-                    this.uniformsDeep.uResolution = [this.app.screen.width, this.app.screen.height];
+
+                    // FIX: Update with physical resolution
+                    this.uniforms.uResolution = [this.app.renderer.width, this.app.renderer.height];
+                    this.uniformsDeep.uResolution = [this.app.renderer.width, this.app.renderer.height];
+
                     this.updateExportFrame();
                 });
             }
@@ -702,7 +909,6 @@
 
             updateShader() {
                 this.fractalContainer.visible = true;
-                this.barnsleyContainer.visible = false;
                 this.fractalContainer.filters = [];
 
                 const deep = this.isDeepZoom();
@@ -710,35 +916,31 @@
 
                 if (type === 'mandelbrot') {
                     this.fractalContainer.filters = deep ? [this.mandelbrotFilterDeep] : [this.mandelbrotFilter];
+                } else if (type === 'burning_ship') {
+                    this.fractalContainer.filters = deep ? [this.burningShipFilterDeep] : [this.burningShipFilter];
+                } else if (type === 'tricorn') {
+                    this.fractalContainer.filters = deep ? [this.tricornFilterDeep] : [this.tricornFilter];
                 } else if (type === 'julia') {
                     this.fractalContainer.filters = deep ? [this.juliaFilterDeep] : [this.juliaFilter];
                 } else if (type === 'newton') {
-                    // Newton does not have a deep implementation yet, falls back to normal
                     this.fractalContainer.filters = [this.newtonFilter];
-                } else if (type === 'barnsley') {
-                    this.fractalContainer.visible = false;
-                    this.barnsleyContainer.visible = true;
-                    this.renderBarnsley();
                 }
             }
 
             updateUniforms() {
-                // Check if we need to switch shaders due to zoom change
                 const deep = this.isDeepZoom();
+                const type = this.state.fractal;
 
-                // Currently active filters check (basic optimization to avoid setting if already correct)
-                // However, we just call updateShader which sets it.
-                // We should make sure updateShader is cheap or only called when needed.
-                // For now, let's call updateShader inside updateUniforms if the mode changed?
-                // Easier to just ensure the right filter is active.
+                // Ensure correct filter is applied (if zoom crossed threshold)
+                let neededFilter;
+                if (type === 'mandelbrot') neededFilter = deep ? this.mandelbrotFilterDeep : this.mandelbrotFilter;
+                else if (type === 'burning_ship') neededFilter = deep ? this.burningShipFilterDeep : this.burningShipFilter;
+                else if (type === 'tricorn') neededFilter = deep ? this.tricornFilterDeep : this.tricornFilter;
+                else if (type === 'julia') neededFilter = deep ? this.juliaFilterDeep : this.juliaFilter;
+                else if (type === 'newton') neededFilter = this.newtonFilter;
 
                 const currentFilters = this.fractalContainer.filters;
-                let neededFilter;
-                if (this.state.fractal === 'mandelbrot') neededFilter = deep ? this.mandelbrotFilterDeep : this.mandelbrotFilter;
-                else if (this.state.fractal === 'julia') neededFilter = deep ? this.juliaFilterDeep : this.juliaFilter;
-                else if (this.state.fractal === 'newton') neededFilter = this.newtonFilter;
-
-                if (this.state.fractal !== 'barnsley' && (!currentFilters || currentFilters[0] !== neededFilter)) {
+                if (!currentFilters || currentFilters[0] !== neededFilter) {
                     this.fractalContainer.filters = [neededFilter];
                 }
 
@@ -750,35 +952,66 @@
                     this.uniforms.uMaxIter = this.state.iterations;
                     this.uniforms.uPalette = this.state.palette;
 
-                    // Propagate to filters
-                    this.mandelbrotFilter.uniforms.uCenter = this.uniforms.uCenter;
-                    this.mandelbrotFilter.uniforms.uZoom = this.uniforms.uZoom;
-                    this.mandelbrotFilter.uniforms.uMaxIter = this.uniforms.uMaxIter;
-                    this.mandelbrotFilter.uniforms.uPalette = this.uniforms.uPalette;
-
-                    this.juliaFilter.uniforms.uCenter = this.uniforms.uCenter;
-                    this.juliaFilter.uniforms.uZoom = this.uniforms.uZoom;
-                    this.juliaFilter.uniforms.uMaxIter = this.uniforms.uMaxIter;
-                    this.juliaFilter.uniforms.uPalette = this.uniforms.uPalette;
-                    this.juliaFilter.uniforms.uJuliaC = [this.state.juliaC.x, this.state.juliaC.y];
-
-                    this.newtonFilter.uniforms.uCenter = this.uniforms.uCenter;
-                    this.newtonFilter.uniforms.uZoom = this.uniforms.uZoom;
-                    this.newtonFilter.uniforms.uMaxIter = this.uniforms.uMaxIter;
-                    this.newtonFilter.uniforms.uPalette = this.uniforms.uPalette;
+                    // Propagate to ALL potential standard filters to be safe (or just current)
+                    if(type === 'mandelbrot') {
+                        this.mandelbrotFilter.uniforms.uCenter = this.uniforms.uCenter;
+                        this.mandelbrotFilter.uniforms.uZoom = this.uniforms.uZoom;
+                        this.mandelbrotFilter.uniforms.uMaxIter = this.uniforms.uMaxIter;
+                        this.mandelbrotFilter.uniforms.uPalette = this.uniforms.uPalette;
+                    }
+                    else if(type === 'burning_ship') {
+                        this.burningShipFilter.uniforms.uCenter = this.uniforms.uCenter;
+                        this.burningShipFilter.uniforms.uZoom = this.uniforms.uZoom;
+                        this.burningShipFilter.uniforms.uMaxIter = this.uniforms.uMaxIter;
+                        this.burningShipFilter.uniforms.uPalette = this.uniforms.uPalette;
+                    }
+                    else if(type === 'tricorn') {
+                        this.tricornFilter.uniforms.uCenter = this.uniforms.uCenter;
+                        this.tricornFilter.uniforms.uZoom = this.uniforms.uZoom;
+                        this.tricornFilter.uniforms.uMaxIter = this.uniforms.uMaxIter;
+                        this.tricornFilter.uniforms.uPalette = this.uniforms.uPalette;
+                    }
+                    else if(type === 'julia') {
+                        this.juliaFilter.uniforms.uCenter = this.uniforms.uCenter;
+                        this.juliaFilter.uniforms.uZoom = this.uniforms.uZoom;
+                        this.juliaFilter.uniforms.uMaxIter = this.uniforms.uMaxIter;
+                        this.juliaFilter.uniforms.uPalette = this.uniforms.uPalette;
+                        this.juliaFilter.uniforms.uJuliaC = [this.state.juliaC.x, this.state.juliaC.y];
+                    }
+                    else if(type === 'newton') {
+                        this.newtonFilter.uniforms.uCenter = this.uniforms.uCenter;
+                        this.newtonFilter.uniforms.uZoom = this.uniforms.uZoom;
+                        this.newtonFilter.uniforms.uMaxIter = this.uniforms.uMaxIter;
+                        this.newtonFilter.uniforms.uPalette = this.uniforms.uPalette;
+                    }
                 } else {
                     // Deep Uniforms
                     const cx = this.splitDouble(this.state.center.x);
                     const cy = this.splitDouble(this.state.center.y);
                     const scale = 3.0 / this.state.zoom;
 
-                    this.mandelbrotFilterDeep.uniforms.uCenterRe = cx;
-                    this.mandelbrotFilterDeep.uniforms.uCenterIm = cy;
-                    this.mandelbrotFilterDeep.uniforms.uScale = scale;
-                    this.mandelbrotFilterDeep.uniforms.uMaxIter = this.state.iterations;
-                    this.mandelbrotFilterDeep.uniforms.uPalette = this.state.palette;
-
-                    if (this.state.fractal === 'julia') {
+                    if (type === 'mandelbrot') {
+                        this.mandelbrotFilterDeep.uniforms.uCenterRe = cx;
+                        this.mandelbrotFilterDeep.uniforms.uCenterIm = cy;
+                        this.mandelbrotFilterDeep.uniforms.uScale = scale;
+                        this.mandelbrotFilterDeep.uniforms.uMaxIter = this.state.iterations;
+                        this.mandelbrotFilterDeep.uniforms.uPalette = this.state.palette;
+                    }
+                    else if (type === 'burning_ship') {
+                        this.burningShipFilterDeep.uniforms.uCenterRe = cx;
+                        this.burningShipFilterDeep.uniforms.uCenterIm = cy;
+                        this.burningShipFilterDeep.uniforms.uScale = scale;
+                        this.burningShipFilterDeep.uniforms.uMaxIter = this.state.iterations;
+                        this.burningShipFilterDeep.uniforms.uPalette = this.state.palette;
+                    }
+                    else if (type === 'tricorn') {
+                        this.tricornFilterDeep.uniforms.uCenterRe = cx;
+                        this.tricornFilterDeep.uniforms.uCenterIm = cy;
+                        this.tricornFilterDeep.uniforms.uScale = scale;
+                        this.tricornFilterDeep.uniforms.uMaxIter = this.state.iterations;
+                        this.tricornFilterDeep.uniforms.uPalette = this.state.palette;
+                    }
+                    else if (type === 'julia') {
                         const jcx = this.splitDouble(this.state.juliaC.x);
                         const jcy = this.splitDouble(this.state.juliaC.y);
 
@@ -791,45 +1024,26 @@
                         this.juliaFilterDeep.uniforms.uJuliaCIm = jcy;
                     }
                 }
-
-                if (this.state.fractal === 'barnsley') {
-                    const w = this.app.screen.width;
-                    const h = this.app.screen.height;
-                    const minDim = Math.min(w, h);
-                    const zoomScale = this.state.zoom * (minDim / 10.0);
-                    this.barnsleyContainer.position.set(w / 2, h / 2);
-                    this.barnsleyContainer.scale.set(zoomScale, -zoomScale);
-                    this.barnsleyContainer.pivot.set(this.state.center.x, this.state.center.y + 5.0);
-
-                    if (this.lastBarnsleyIter !== this.state.iterations) {
-                        this.renderBarnsley();
-                    }
-                }
-            }
-
-            renderBarnsley() {
-                this.lastBarnsleyIter = this.state.iterations;
-                const g = this.barnsleyGraphics;
-                g.clear();
-                g.beginFill(0x00FF00, 0.5);
-                const iterations = this.state.iterations * 200;
-                let x = 0; let y = 0;
-                for (let i = 0; i < iterations; i++) {
-                    let nextX, nextY;
-                    let r = Math.random();
-                    if (r < 0.01) { nextX = 0; nextY = 0.16 * y; }
-                    else if (r < 0.86) { nextX = 0.85 * x + 0.04 * y; nextY = -0.04 * x + 0.85 * y + 1.6; }
-                    else if (r < 0.93) { nextX = 0.2 * x - 0.26 * y; nextY = 0.23 * x + 0.22 * y + 1.6; }
-                    else { nextX = -0.15 * x + 0.28 * y; nextY = 0.26 * x + 0.24 * y + 0.44; }
-                    x = nextX; y = nextY;
-                    if (i > 20) g.drawRect(x, y, 0.01, 0.01);
-                }
-                g.endFill();
             }
 
             getScaleFactor() {
-                if (this.state.fractal === 'barnsley') return 10.0;
-                return 3.0;
+                return 3.0; // Standardized for all shaders now
+            }
+
+            getExportFrameDimensions() {
+                const sw = this.app.screen.width;
+                const sh = this.app.screen.height;
+                const aspect = 16/9;
+
+                // Use 0.75 (75%) instead of 0.9 to avoid overlapping UI
+                let w = sw * 0.75;
+                let h = w / aspect;
+
+                if (h > sh * 0.75) {
+                    h = sh * 0.75;
+                    w = h * aspect;
+                }
+                return { w, h };
             }
 
             updateExportFrame() {
@@ -839,22 +1053,14 @@
                     return;
                 }
 
+                const dims = this.getExportFrameDimensions();
                 const sw = this.app.screen.width;
                 const sh = this.app.screen.height;
-                const aspect = 16/9;
 
-                let w = sw * 0.9;
-                let h = w / aspect;
-
-                if (h > sh * 0.9) {
-                    h = sh * 0.9;
-                    w = h * aspect;
-                }
-
-                frame.style.width = `${w}px`;
-                frame.style.height = `${h}px`;
-                frame.style.left = `${(sw - w)/2}px`;
-                frame.style.top = `${(sh - h)/2}px`;
+                frame.style.width = `${dims.w}px`;
+                frame.style.height = `${dims.h}px`;
+                frame.style.left = `${(sw - dims.w)/2}px`;
+                frame.style.top = `${(sh - dims.h)/2}px`;
 
                 frame.classList.remove('hidden');
             }
@@ -1068,6 +1274,8 @@
                 const saved = localStorage.getItem('fractalSettings');
                 if (saved) {
                     const parsed = JSON.parse(saved);
+                    // Filter out barnsley if it was saved
+                    if (parsed.fractal === 'barnsley') parsed.fractal = 'mandelbrot';
                     this.state = { ...this.state, ...parsed };
                     document.getElementById('select-fractal').value = this.state.fractal;
                     document.getElementById('input-zoom').value = this.state.zoom;
@@ -1104,13 +1312,14 @@
                 const fav = this.state.favorites.find(f => f.id === id);
                 if (fav) {
                     this.state.fractal = fav.fractal;
+                    if (this.state.fractal === 'barnsley') this.state.fractal = 'mandelbrot'; // Fallback
                     this.state.zoom = fav.zoom;
                     this.state.center = { ...fav.center };
                     this.state.iterations = fav.iterations;
                     this.state.palette = fav.palette;
                     this.state.juliaC = { ...fav.juliaC };
 
-                    document.getElementById('select-fractal').value = fav.fractal;
+                    document.getElementById('select-fractal').value = this.state.fractal;
                     document.getElementById('val-zoom').innerText = fav.zoom.toFixed(2);
                     document.getElementById('input-zoom').value = fav.zoom;
                     document.getElementById('input-iter').value = fav.iterations;
@@ -1161,13 +1370,8 @@
                 const sh = this.app.screen.height;
                 const sMin = Math.min(sw, sh);
 
-                const aspect = 16/9;
-                let frameW = sw * 0.9;
-                let frameH = frameW / aspect;
-                if (frameH > sh * 0.9) {
-                    frameH = sh * 0.9;
-                    frameW = frameH * aspect;
-                }
+                const dims = this.getExportFrameDimensions();
+                const frameH = dims.h;
 
                 const exportZoom = (this.state.zoom * sMin) / frameH;
 
@@ -1175,69 +1379,56 @@
 
                 // Check Deep for export too
                 const deep = exportZoom > 50000;
+                const type = this.state.fractal;
                 let filter;
 
-                if (this.state.fractal === 'mandelbrot') {
-                     if (deep) {
-                         const cx = this.splitDouble(this.state.center.x);
-                         const cy = this.splitDouble(this.state.center.y);
-                         filter = new PIXI.Filter(vertexShader, mandelbrotFragDeep, {
-                             uResolution: [targetW, targetH],
-                             uCenterRe: cx,
-                             uCenterIm: cy,
-                             uScale: 3.0 / exportZoom,
-                             uMaxIter: this.state.iterations,
-                             uPalette: this.state.palette
-                         });
-                     } else {
-                         filter = new PIXI.Filter(vertexShader, mandelbrotFrag, {
-                             uResolution: [targetW, targetH],
-                             uCenter: [this.state.center.x, this.state.center.y],
-                             uZoom: exportZoom,
-                             uMaxIter: this.state.iterations,
-                             uPalette: this.state.palette
-                         });
-                     }
+                const commonUniforms = {
+                     uResolution: [targetW, targetH],
+                     uMaxIter: this.state.iterations,
+                     uPalette: this.state.palette
+                };
+
+                const deepUniforms = deep ? {
+                     ...commonUniforms,
+                     uCenterRe: this.splitDouble(this.state.center.x),
+                     uCenterIm: this.splitDouble(this.state.center.y),
+                     uScale: 3.0 / exportZoom
+                } : null;
+
+                const normalUniforms = !deep ? {
+                     ...commonUniforms,
+                     uCenter: [this.state.center.x, this.state.center.y],
+                     uZoom: exportZoom
+                } : null;
+
+                if (type === 'mandelbrot') {
+                     if (deep) filter = new PIXI.Filter(vertexShader, mandelbrotFragDeep, deepUniforms);
+                     else filter = new PIXI.Filter(vertexShader, mandelbrotFrag, normalUniforms);
                 }
-                else if (this.state.fractal === 'julia') {
+                else if (type === 'burning_ship') {
+                     if (deep) filter = new PIXI.Filter(vertexShader, burningShipFragDeep, deepUniforms);
+                     else filter = new PIXI.Filter(vertexShader, burningShipFrag, normalUniforms);
+                }
+                else if (type === 'tricorn') {
+                     if (deep) filter = new PIXI.Filter(vertexShader, tricornFragDeep, deepUniforms);
+                     else filter = new PIXI.Filter(vertexShader, tricornFrag, normalUniforms);
+                }
+                else if (type === 'julia') {
                     if (deep) {
-                        const cx = this.splitDouble(this.state.center.x);
-                        const cy = this.splitDouble(this.state.center.y);
-                        const jcx = this.splitDouble(this.state.juliaC.x);
-                        const jcy = this.splitDouble(this.state.juliaC.y);
                         filter = new PIXI.Filter(vertexShader, juliaFragDeep, {
-                            uResolution: [targetW, targetH],
-                            uCenterRe: cx,
-                            uCenterIm: cy,
-                            uScale: 3.0 / exportZoom,
-                            uMaxIter: this.state.iterations,
-                            uPalette: this.state.palette,
-                            uJuliaCRe: jcx,
-                            uJuliaCIm: jcy
+                            ...deepUniforms,
+                            uJuliaCRe: this.splitDouble(this.state.juliaC.x),
+                            uJuliaCIm: this.splitDouble(this.state.juliaC.y)
                         });
                     } else {
                         filter = new PIXI.Filter(vertexShader, juliaFrag, {
-                            uResolution: [targetW, targetH],
-                            uCenter: [this.state.center.x, this.state.center.y],
-                            uZoom: exportZoom,
-                            uMaxIter: this.state.iterations,
-                            uPalette: this.state.palette,
+                            ...normalUniforms,
                             uJuliaC: [this.state.juliaC.x, this.state.juliaC.y]
                         });
                     }
                 }
-                else if (this.state.fractal === 'newton') {
-                    filter = new PIXI.Filter(vertexShader, newtonFrag, {
-                        uResolution: [targetW, targetH],
-                        uCenter: [this.state.center.x, this.state.center.y],
-                        uZoom: exportZoom,
-                        uMaxIter: this.state.iterations,
-                        uPalette: this.state.palette
-                    });
-                }
-                else {
-                    alert("High-res export not fully supported for Barnsley Fern yet.");
-                    return;
+                else if (type === 'newton') {
+                    filter = new PIXI.Filter(vertexShader, newtonFrag, normalUniforms);
                 }
 
                 const sprite = new PIXI.Sprite(PIXI.Texture.WHITE);
