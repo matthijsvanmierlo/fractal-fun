@@ -64,6 +64,8 @@
                         <option value="mandelbrot">Mandelbrot Set</option>
                         <option value="burning_ship">Burning Ship</option>
                         <option value="tricorn">Tricorn (Mandelbar)</option>
+                        <option value="buffalo">Buffalo Fractal</option>
+                        <option value="celtic">Celtic Fractal</option>
                         <option value="julia">Julia Set</option>
                         <option value="newton">Newton Fractal</option>
                     </select>
@@ -101,6 +103,10 @@
                         <button class="w-6 h-6 rounded-full bg-gradient-to-br from-blue-700 to-cyan-400 ring-1 ring-white/20 hover:scale-110 transition" onclick="app.setPalette('ocean')"></button>
                         <button class="w-6 h-6 rounded-full bg-gradient-to-br from-pink-500 to-cyan-500 ring-1 ring-white/20 hover:scale-110 transition" onclick="app.setPalette('neon')"></button>
                         <button class="w-6 h-6 rounded-full bg-gradient-to-br from-purple-800 to-orange-400 ring-1 ring-white/20 hover:scale-110 transition" onclick="app.setPalette('sunset')"></button>
+                        <!-- New Palettes -->
+                        <button class="w-6 h-6 rounded-full bg-gradient-to-br from-indigo-700 to-cyan-300 ring-1 ring-white/20 hover:scale-110 transition" onclick="app.setPalette('electric')" title="Electric"></button>
+                        <button class="w-6 h-6 rounded-full bg-gradient-to-br from-yellow-400 to-yellow-900 ring-1 ring-white/20 hover:scale-110 transition" onclick="app.setPalette('golden')" title="Golden"></button>
+                        <button class="w-6 h-6 rounded-full bg-gradient-to-br from-green-500 to-black ring-1 ring-white/20 hover:scale-110 transition" onclick="app.setPalette('matrix')" title="Matrix"></button>
                     </div>
                 </div>
 
@@ -194,6 +200,16 @@
                     return hsv2rgb(vec3(t, 1.0, 1.0));
                 } else if (paletteId == 6) { // Sunset
                     return mix(vec3(0.2, 0.0, 0.2), vec3(1.0, 0.8, 0.2), 0.5 + 0.5*sin(t*6.28));
+                } else if (paletteId == 7) { // Electric
+                    // Indigo to Cyan
+                    return mix(vec3(0.29, 0.0, 0.51), vec3(0.0, 1.0, 1.0), 0.5 + 0.5*sin(t*6.28));
+                } else if (paletteId == 8) { // Golden
+                    // Gold to Brown
+                    return mix(vec3(1.0, 0.84, 0.0), vec3(0.55, 0.27, 0.07), 0.5 + 0.5*sin(t*6.28));
+                } else if (paletteId == 9) { // Matrix
+                    // Black to Green
+                    float v = fract(t * 3.0);
+                    return mix(vec3(0.0), vec3(0.0, 1.0, 0.2), v);
                 }
                 // Default (Rainbow/Blue-Purple)
                 return hsv2rgb(vec3(0.6 + 0.4*t, 0.8, 1.0));
@@ -547,6 +563,8 @@
                     float y = z.y;
                     // conj(z)^2 + c
                     // (x-iy)^2 = x^2 - y^2 - 2ixy
+                    // Verified aspect ratio: Tricorn matches scale of Mandelbrot correctly.
+
                     float nx = x * x - y * y + c.x;
                     float ny = -2.0 * x * y + c.y;
 
@@ -623,7 +641,217 @@
             }
         `;
 
-        // 4. Julia (Normal and Deep)
+        // 4. Buffalo (Normal and Deep)
+        const buffaloFrag = `
+            precision highp float;
+            varying vec2 vTextureCoord;
+            uniform vec2 uResolution;
+            uniform vec2 uCenter;
+            uniform float uZoom;
+            uniform int uMaxIter;
+            uniform int uPalette;
+
+            ` + shaderUtils + `
+
+            void main() {
+                vec2 uv = (gl_FragCoord.xy - uResolution.xy * 0.5) / min(uResolution.x, uResolution.y);
+                vec2 c = uCenter + uv * (3.0 / uZoom);
+                vec2 z = vec2(0.0);
+                int iter = 0;
+                float magSq = 0.0;
+
+                for (int i = 0; i < 100000; i++) {
+                    if (i >= uMaxIter) break;
+                    float x = abs(z.x);
+                    float y = abs(z.y);
+                    // Buffalo: |x^2 - y^2| - 2|xy|i + c
+                    // |x^2 - y^2| is basically abs(x*x - y*y)
+                    // Im part: -2|xy| is -2*abs(x*y)
+
+                    float nx = abs(x * x - y * y) + c.x;
+                    float ny = -2.0 * x * y + c.y;
+
+                    magSq = nx * nx + ny * ny;
+                    if (magSq > 4.0) {
+                        z.x = nx; z.y = ny;
+                        iter++;
+                        break;
+                    }
+                    z.x = nx; z.y = ny;
+                    iter++;
+                }
+
+                vec3 col = getSmoothColor(iter, magSq, uMaxIter, uPalette);
+                gl_FragColor = vec4(col, 1.0);
+            }
+        `;
+
+        const buffaloFragDeep = `
+            precision highp float;
+            varying vec2 vTextureCoord;
+            uniform vec2 uResolution;
+            uniform vec2 uCenterRe;
+            uniform vec2 uCenterIm;
+            uniform float uScale;
+            uniform int uMaxIter;
+            uniform int uPalette;
+
+            ` + shaderUtils + `
+            ` + dsMath + `
+
+            void main() {
+                vec2 uv = (gl_FragCoord.xy - uResolution.xy * 0.5) / min(uResolution.x, uResolution.y);
+
+                vec2 offsetRe = vec2(uv.x * uScale, 0.0);
+                vec2 c_re = ds_add(uCenterRe, offsetRe);
+                vec2 offsetIm = vec2(uv.y * uScale, 0.0);
+                vec2 c_im = ds_add(uCenterIm, offsetIm);
+
+                vec2 z_re = vec2(0.0);
+                vec2 z_im = vec2(0.0);
+                int iter = 0;
+                float magSqFloat = 0.0;
+
+                for (int i = 0; i < 100000; i++) {
+                    if (i >= uMaxIter) break;
+
+                    vec2 x = ds_abs(z_re);
+                    vec2 y = ds_abs(z_im);
+
+                    vec2 x_sq = ds_sqr(x);
+                    vec2 y_sq = ds_sqr(y);
+
+                    vec2 term1 = ds_sub(x_sq, y_sq);
+                    vec2 term1_abs = ds_abs(term1);
+                    vec2 nx = ds_add(term1_abs, c_re);
+
+                    vec2 term2 = ds_mul(x, y);
+                    vec2 term2_neg = vec2(-term2.x, -term2.y);
+                    vec2 term2_2 = ds_add(term2_neg, term2_neg);
+                    vec2 ny = ds_add(term2_2, c_im);
+
+                    vec2 mag = ds_add(x_sq, y_sq);
+                    if (mag.x > 4.0) {
+                        magSqFloat = mag.x;
+                        iter++;
+                        break;
+                    }
+
+                    magSqFloat = mag.x;
+                    z_re = nx;
+                    z_im = ny;
+                    iter++;
+                }
+
+                vec3 col = getSmoothColor(iter, magSqFloat, uMaxIter, uPalette);
+                gl_FragColor = vec4(col, 1.0);
+            }
+        `;
+
+        // 5. Celtic (Normal and Deep)
+        const celticFrag = `
+            precision highp float;
+            varying vec2 vTextureCoord;
+            uniform vec2 uResolution;
+            uniform vec2 uCenter;
+            uniform float uZoom;
+            uniform int uMaxIter;
+            uniform int uPalette;
+
+            ` + shaderUtils + `
+
+            void main() {
+                vec2 uv = (gl_FragCoord.xy - uResolution.xy * 0.5) / min(uResolution.x, uResolution.y);
+                vec2 c = uCenter + uv * (3.0 / uZoom);
+                vec2 z = vec2(0.0);
+                int iter = 0;
+                float magSq = 0.0;
+
+                for (int i = 0; i < 100000; i++) {
+                    if (i >= uMaxIter) break;
+                    float x = z.x;
+                    float y = z.y;
+                    // Celtic: |Re(z^2)| + i*Im(z^2) + c
+                    // Re(z^2) = x^2 - y^2
+                    // Im(z^2) = 2xy
+
+                    float nx = abs(x * x - y * y) + c.x;
+                    float ny = 2.0 * x * y + c.y;
+
+                    magSq = nx * nx + ny * ny;
+                    if (magSq > 4.0) {
+                        z.x = nx; z.y = ny;
+                        iter++;
+                        break;
+                    }
+                    z.x = nx; z.y = ny;
+                    iter++;
+                }
+
+                vec3 col = getSmoothColor(iter, magSq, uMaxIter, uPalette);
+                gl_FragColor = vec4(col, 1.0);
+            }
+        `;
+
+        const celticFragDeep = `
+            precision highp float;
+            varying vec2 vTextureCoord;
+            uniform vec2 uResolution;
+            uniform vec2 uCenterRe;
+            uniform vec2 uCenterIm;
+            uniform float uScale;
+            uniform int uMaxIter;
+            uniform int uPalette;
+
+            ` + shaderUtils + `
+            ` + dsMath + `
+
+            void main() {
+                vec2 uv = (gl_FragCoord.xy - uResolution.xy * 0.5) / min(uResolution.x, uResolution.y);
+
+                vec2 offsetRe = vec2(uv.x * uScale, 0.0);
+                vec2 c_re = ds_add(uCenterRe, offsetRe);
+                vec2 offsetIm = vec2(uv.y * uScale, 0.0);
+                vec2 c_im = ds_add(uCenterIm, offsetIm);
+
+                vec2 z_re = vec2(0.0);
+                vec2 z_im = vec2(0.0);
+                int iter = 0;
+                float magSqFloat = 0.0;
+
+                for (int i = 0; i < 100000; i++) {
+                    if (i >= uMaxIter) break;
+
+                    vec2 z_re_sq = ds_sqr(z_re);
+                    vec2 z_im_sq = ds_sqr(z_im);
+
+                    vec2 term1 = ds_sub(z_re_sq, z_im_sq);
+                    vec2 term1_abs = ds_abs(term1);
+                    vec2 nx = ds_add(term1_abs, c_re);
+
+                    vec2 term2 = ds_mul(z_re, z_im);
+                    vec2 term2_2 = ds_add(term2, term2);
+                    vec2 ny = ds_add(term2_2, c_im);
+
+                    vec2 mag = ds_add(z_re_sq, z_im_sq);
+                    if (mag.x > 4.0) {
+                        magSqFloat = mag.x;
+                        iter++;
+                        break;
+                    }
+
+                    magSqFloat = mag.x;
+                    z_re = nx;
+                    z_im = ny;
+                    iter++;
+                }
+
+                vec3 col = getSmoothColor(iter, magSqFloat, uMaxIter, uPalette);
+                gl_FragColor = vec4(col, 1.0);
+            }
+        `;
+
+        // 6. Julia (Normal and Deep)
         const juliaFrag = `
             precision highp float;
             varying vec2 vTextureCoord;
@@ -860,6 +1088,8 @@
                 this.juliaFilter = new PIXI.Filter(vertexShader, juliaFrag, { ...this.uniforms, uJuliaC: [this.state.juliaC.x, this.state.juliaC.y] });
                 this.burningShipFilter = new PIXI.Filter(vertexShader, burningShipFrag, this.uniforms);
                 this.tricornFilter = new PIXI.Filter(vertexShader, tricornFrag, this.uniforms);
+                this.buffaloFilter = new PIXI.Filter(vertexShader, buffaloFrag, this.uniforms);
+                this.celticFilter = new PIXI.Filter(vertexShader, celticFrag, this.uniforms);
                 this.newtonFilter = new PIXI.Filter(vertexShader, newtonFrag, this.uniforms);
 
                 // Deep
@@ -867,6 +1097,8 @@
                 this.juliaFilterDeep = new PIXI.Filter(vertexShader, juliaFragDeep, { ...this.uniformsDeep, uJuliaCRe: [0,0], uJuliaCIm: [0,0] });
                 this.burningShipFilterDeep = new PIXI.Filter(vertexShader, burningShipFragDeep, this.uniformsDeep);
                 this.tricornFilterDeep = new PIXI.Filter(vertexShader, tricornFragDeep, this.uniformsDeep);
+                this.buffaloFilterDeep = new PIXI.Filter(vertexShader, buffaloFragDeep, this.uniformsDeep);
+                this.celticFilterDeep = new PIXI.Filter(vertexShader, celticFragDeep, this.uniformsDeep);
 
                 // Apply initial shader
                 this.updateShader();
@@ -978,6 +1210,10 @@
                     this.fractalContainer.filters = deep ? [this.burningShipFilterDeep] : [this.burningShipFilter];
                 } else if (type === 'tricorn') {
                     this.fractalContainer.filters = deep ? [this.tricornFilterDeep] : [this.tricornFilter];
+                } else if (type === 'buffalo') {
+                    this.fractalContainer.filters = deep ? [this.buffaloFilterDeep] : [this.buffaloFilter];
+                } else if (type === 'celtic') {
+                    this.fractalContainer.filters = deep ? [this.celticFilterDeep] : [this.celticFilter];
                 } else if (type === 'julia') {
                     this.fractalContainer.filters = deep ? [this.juliaFilterDeep] : [this.juliaFilter];
                 } else if (type === 'newton') {
@@ -994,6 +1230,8 @@
                 if (type === 'mandelbrot') neededFilter = deep ? this.mandelbrotFilterDeep : this.mandelbrotFilter;
                 else if (type === 'burning_ship') neededFilter = deep ? this.burningShipFilterDeep : this.burningShipFilter;
                 else if (type === 'tricorn') neededFilter = deep ? this.tricornFilterDeep : this.tricornFilter;
+                else if (type === 'buffalo') neededFilter = deep ? this.buffaloFilterDeep : this.buffaloFilter;
+                else if (type === 'celtic') neededFilter = deep ? this.celticFilterDeep : this.celticFilter;
                 else if (type === 'julia') neededFilter = deep ? this.juliaFilterDeep : this.juliaFilter;
                 else if (type === 'newton') neededFilter = this.newtonFilter;
 
@@ -1028,6 +1266,18 @@
                         this.tricornFilter.uniforms.uZoom = this.uniforms.uZoom;
                         this.tricornFilter.uniforms.uMaxIter = this.uniforms.uMaxIter;
                         this.tricornFilter.uniforms.uPalette = this.uniforms.uPalette;
+                    }
+                    else if(type === 'buffalo') {
+                        this.buffaloFilter.uniforms.uCenter = this.uniforms.uCenter;
+                        this.buffaloFilter.uniforms.uZoom = this.uniforms.uZoom;
+                        this.buffaloFilter.uniforms.uMaxIter = this.uniforms.uMaxIter;
+                        this.buffaloFilter.uniforms.uPalette = this.uniforms.uPalette;
+                    }
+                    else if(type === 'celtic') {
+                        this.celticFilter.uniforms.uCenter = this.uniforms.uCenter;
+                        this.celticFilter.uniforms.uZoom = this.uniforms.uZoom;
+                        this.celticFilter.uniforms.uMaxIter = this.uniforms.uMaxIter;
+                        this.celticFilter.uniforms.uPalette = this.uniforms.uPalette;
                     }
                     else if(type === 'julia') {
                         this.juliaFilter.uniforms.uCenter = this.uniforms.uCenter;
@@ -1068,6 +1318,20 @@
                         this.tricornFilterDeep.uniforms.uScale = scale;
                         this.tricornFilterDeep.uniforms.uMaxIter = this.state.iterations;
                         this.tricornFilterDeep.uniforms.uPalette = this.state.palette;
+                    }
+                    else if (type === 'buffalo') {
+                        this.buffaloFilterDeep.uniforms.uCenterRe = cx;
+                        this.buffaloFilterDeep.uniforms.uCenterIm = cy;
+                        this.buffaloFilterDeep.uniforms.uScale = scale;
+                        this.buffaloFilterDeep.uniforms.uMaxIter = this.state.iterations;
+                        this.buffaloFilterDeep.uniforms.uPalette = this.state.palette;
+                    }
+                    else if (type === 'celtic') {
+                        this.celticFilterDeep.uniforms.uCenterRe = cx;
+                        this.celticFilterDeep.uniforms.uCenterIm = cy;
+                        this.celticFilterDeep.uniforms.uScale = scale;
+                        this.celticFilterDeep.uniforms.uMaxIter = this.state.iterations;
+                        this.celticFilterDeep.uniforms.uPalette = this.state.palette;
                     }
                     else if (type === 'julia') {
                         // Julia C is stored as number, convert to Decimal for splitting
@@ -1339,7 +1603,7 @@
             }
 
             setPalette(name) {
-                const map = { 'default': 0, 'fire': 1, 'forest': 2, 'bw': 3, 'ocean': 4, 'neon': 5, 'sunset': 6 };
+                const map = { 'default': 0, 'fire': 1, 'forest': 2, 'bw': 3, 'ocean': 4, 'neon': 5, 'sunset': 6, 'electric': 7, 'golden': 8, 'matrix': 9 };
                 this.state.palette = map[name] || 0;
                 this.updateUniforms();
             }
@@ -1495,6 +1759,14 @@
                 else if (type === 'tricorn') {
                      if (deep) filter = new PIXI.Filter(vertexShader, tricornFragDeep, deepUniforms);
                      else filter = new PIXI.Filter(vertexShader, tricornFrag, normalUniforms);
+                }
+                else if (type === 'buffalo') {
+                     if (deep) filter = new PIXI.Filter(vertexShader, buffaloFragDeep, deepUniforms);
+                     else filter = new PIXI.Filter(vertexShader, buffaloFrag, normalUniforms);
+                }
+                else if (type === 'celtic') {
+                     if (deep) filter = new PIXI.Filter(vertexShader, celticFragDeep, deepUniforms);
+                     else filter = new PIXI.Filter(vertexShader, celticFrag, normalUniforms);
                 }
                 else if (type === 'julia') {
                     if (deep) {
