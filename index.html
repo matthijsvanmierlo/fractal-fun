@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Fractal Visualizer</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/decimal.js/10.4.3/decimal.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.3.2/pixi.min.js"></script>
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #000; touch-action: none; }
@@ -317,6 +318,22 @@
             void main() {
                 vec2 uv = (gl_FragCoord.xy - uResolution.xy * 0.5) / min(uResolution.x, uResolution.y);
                 vec2 c = uCenter + uv * (3.0 / uZoom);
+
+                // Optimization: Cardioid and Period-2 Bulb Check
+                // Cardioid: q * (q + (x-1/4)) < 1/4 * y^2, where q = (x-1/4)^2 + y^2
+                float x = c.x;
+                float y = c.y;
+                float y2 = y * y;
+                float q = (x - 0.25) * (x - 0.25) + y2;
+                if (q * (q + (x - 0.25)) < 0.25 * y2) {
+                    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                    return;
+                }
+                // Period-2 Bulb: (x+1)^2 + y^2 < 1/16
+                if ((x + 1.0) * (x + 1.0) + y2 < 0.0625) {
+                    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                    return;
+                }
 
                 vec2 z = vec2(0.0);
                 int iter = 0;
@@ -794,14 +811,19 @@
                 this.defaultState = {
                     fractal: 'mandelbrot',
                     zoom: 1.0,
-                    center: { x: -0.5, y: 0.0 },
+                    center: { x: new Decimal(-0.5), y: new Decimal(0.0) },
                     iterations: 100,
                     palette: 0,
                     juliaC: { x: -0.7, y: 0.27015 },
                     favorites: []
                 };
 
-                this.state = JSON.parse(JSON.stringify(this.defaultState));
+                // Deep copy manually for Decimal objects
+                this.state = {
+                    ...this.defaultState,
+                    center: { x: new Decimal(this.defaultState.center.x), y: new Decimal(this.defaultState.center.y) },
+                    favorites: []
+                };
                 this.history = [];
                 this.showExportFrame = false;
 
@@ -866,17 +888,25 @@
                 });
             }
 
-            // Helper to split JS Double (64-bit) to two Float32
-            splitDouble(value) {
-                const high = Math.fround(value);
-                const low = value - high;
+            // Helper to split High Precision Decimal to two Float32 (High, Low) for DS Arithmetic
+            splitDecimal(decimalVal) {
+                const valNumber = decimalVal.toNumber();
+                const high = Math.fround(valNumber);
+                const low = Math.fround(decimalVal.minus(high).toNumber());
                 return [high, low];
             }
 
             pushState() {
-                const snapshot = JSON.parse(JSON.stringify(this.state));
-                delete snapshot.favorites;
-                this.history.push(snapshot);
+                // Manually serialize Decimal state because JSON.stringify converts them to strings
+                // and we want to snapshot values, not references if they were objects (Decimal objects are immutable but let's be safe)
+                const snapshot = {
+                    ...this.state,
+                    center: { x: this.state.center.x.toString(), y: this.state.center.y.toString() },
+                    favorites: [] // don't push favorites
+                };
+                // JSON stringify/parse to clone other primitives deeply
+                const clone = JSON.parse(JSON.stringify(snapshot));
+                this.history.push(clone);
                 if (this.history.length > 20) this.history.shift();
             }
 
@@ -884,7 +914,13 @@
                 if (this.history.length === 0) return;
                 const prev = this.history.pop();
                 const currentFavs = this.state.favorites;
-                this.state = { ...prev, favorites: currentFavs };
+
+                // Restore state and re-inflate Decimals
+                this.state = {
+                    ...prev,
+                    center: { x: new Decimal(prev.center.x), y: new Decimal(prev.center.y) },
+                    favorites: currentFavs
+                };
 
                 document.getElementById('select-fractal').value = this.state.fractal;
                 document.getElementById('input-zoom').value = this.state.zoom;
@@ -1008,8 +1044,8 @@
                     }
                 } else {
                     // Deep Uniforms
-                    const cx = this.splitDouble(this.state.center.x);
-                    const cy = this.splitDouble(this.state.center.y);
+                    const cx = this.splitDecimal(this.state.center.x);
+                    const cy = this.splitDecimal(this.state.center.y);
                     const scale = 3.0 / this.state.zoom;
 
                     if (type === 'mandelbrot') {
@@ -1034,8 +1070,9 @@
                         this.tricornFilterDeep.uniforms.uPalette = this.state.palette;
                     }
                     else if (type === 'julia') {
-                        const jcx = this.splitDouble(this.state.juliaC.x);
-                        const jcy = this.splitDouble(this.state.juliaC.y);
+                        // Julia C is stored as number, convert to Decimal for splitting
+                        const jcx = this.splitDecimal(new Decimal(this.state.juliaC.x));
+                        const jcy = this.splitDecimal(new Decimal(this.state.juliaC.y));
 
                         this.juliaFilterDeep.uniforms.uCenterRe = cx;
                         this.juliaFilterDeep.uniforms.uCenterIm = cy;
@@ -1122,8 +1159,12 @@
                         const dy = current.y - lastPoint.y;
                         const scale = this.getScaleFactor() / (this.state.zoom * Math.min(this.app.screen.width, this.app.screen.height));
 
-                        this.state.center.x -= dx * scale;
-                        this.state.center.y += dy * scale;
+                        // Use Decimal for accumulation
+                        const dxDec = new Decimal(dx).times(scale);
+                        const dyDec = new Decimal(dy).times(scale);
+
+                        this.state.center.x = this.state.center.x.minus(dxDec);
+                        this.state.center.y = this.state.center.y.plus(dyDec);
 
                         lastPoint = current;
                         this.updateUniforms();
@@ -1186,9 +1227,19 @@
                         this.state.zoom /= zoomFactor;
                     }
 
-                    const term = this.getScaleFactor() * (1.0/oldZoom - 1.0/this.state.zoom);
-                    this.state.center.x += u * term;
-                    this.state.center.y += v * term;
+                    // term = scale * (1/oldZoom - 1/newZoom)
+                    // We can use native JS numbers for term calculation as long as zoom is not huge (it's up to 10^14)
+                    // But to be consistent with 'center' which is Decimal, we should cast.
+                    // u, v are small floats.
+
+                    const scaleFactor = this.getScaleFactor();
+                    const termVal = scaleFactor * (1.0/oldZoom - 1.0/this.state.zoom);
+                    const uDec = new Decimal(u);
+                    const vDec = new Decimal(v);
+                    const termDec = new Decimal(termVal);
+
+                    this.state.center.x = this.state.center.x.plus(uDec.times(termDec));
+                    this.state.center.y = this.state.center.y.plus(vDec.times(termDec));
 
                     document.getElementById('input-zoom').value = this.state.zoom;
                     document.getElementById('val-zoom').innerText = this.state.zoom.toFixed(2);
@@ -1213,11 +1264,16 @@
                     const v = (h * 0.5 - my) / minDim;
 
                     const scale = this.getScaleFactor();
-                    const wx = this.state.center.x + u * (scale / this.state.zoom);
-                    const wy = this.state.center.y + v * (scale / this.state.zoom);
+                    // const wx = this.state.center.x + u * (scale / this.state.zoom);
+                    // const wy = this.state.center.y + v * (scale / this.state.zoom);
 
-                    this.state.center.x = wx;
-                    this.state.center.y = wy;
+                    const offsetScale = scale / this.state.zoom;
+                    const uDec = new Decimal(u);
+                    const vDec = new Decimal(v);
+                    const osDec = new Decimal(offsetScale);
+
+                    this.state.center.x = this.state.center.x.plus(uDec.times(osDec));
+                    this.state.center.y = this.state.center.y.plus(vDec.times(osDec));
 
                     if (e.altKey) {
                         this.state.zoom /= 2.0;
@@ -1236,12 +1292,12 @@
                     const minDim = Math.min(this.app.screen.width, this.app.screen.height);
                     const scale = this.getScaleFactor() / (this.state.zoom * minDim);
                     const stepPixels = 50;
-                    const moveStep = stepPixels * scale;
+                    const moveStep = new Decimal(stepPixels * scale);
 
-                    if (e.key === 'ArrowUp') { this.pushState(); this.state.center.y += moveStep; }
-                    else if (e.key === 'ArrowDown') { this.pushState(); this.state.center.y -= moveStep; }
-                    else if (e.key === 'ArrowLeft') { this.pushState(); this.state.center.x -= moveStep; }
-                    else if (e.key === 'ArrowRight') { this.pushState(); this.state.center.x += moveStep; }
+                    if (e.key === 'ArrowUp') { this.pushState(); this.state.center.y = this.state.center.y.plus(moveStep); }
+                    else if (e.key === 'ArrowDown') { this.pushState(); this.state.center.y = this.state.center.y.minus(moveStep); }
+                    else if (e.key === 'ArrowLeft') { this.pushState(); this.state.center.x = this.state.center.x.minus(moveStep); }
+                    else if (e.key === 'ArrowRight') { this.pushState(); this.state.center.x = this.state.center.x.plus(moveStep); }
                     else return;
 
                     this.updateUniforms();
@@ -1299,6 +1355,11 @@
                     // Filter out barnsley if it was saved
                     if (parsed.fractal === 'barnsley') parsed.fractal = 'mandelbrot';
                     this.state = { ...this.state, ...parsed };
+
+                    // Re-instantiate Decimals from strings/numbers
+                    this.state.center.x = new Decimal(this.state.center.x);
+                    this.state.center.y = new Decimal(this.state.center.y);
+
                     document.getElementById('select-fractal').value = this.state.fractal;
                     document.getElementById('input-zoom').value = this.state.zoom;
                     document.getElementById('val-zoom').innerText = this.state.zoom.toFixed(2);
@@ -1336,7 +1397,7 @@
                     this.state.fractal = fav.fractal;
                     if (this.state.fractal === 'barnsley') this.state.fractal = 'mandelbrot'; // Fallback
                     this.state.zoom = fav.zoom;
-                    this.state.center = { ...fav.center };
+                    this.state.center = { x: new Decimal(fav.center.x), y: new Decimal(fav.center.y) };
                     this.state.iterations = fav.iterations;
                     this.state.palette = fav.palette;
                     this.state.juliaC = { ...fav.juliaC };
@@ -1412,14 +1473,14 @@
 
                 const deepUniforms = deep ? {
                      ...commonUniforms,
-                     uCenterRe: this.splitDouble(this.state.center.x),
-                     uCenterIm: this.splitDouble(this.state.center.y),
+                     uCenterRe: this.splitDecimal(this.state.center.x),
+                     uCenterIm: this.splitDecimal(this.state.center.y),
                      uScale: 3.0 / exportZoom
                 } : null;
 
                 const normalUniforms = !deep ? {
                      ...commonUniforms,
-                     uCenter: [this.state.center.x, this.state.center.y],
+                     uCenter: [this.state.center.x.toNumber(), this.state.center.y.toNumber()],
                      uZoom: exportZoom
                 } : null;
 
@@ -1439,8 +1500,8 @@
                     if (deep) {
                         filter = new PIXI.Filter(vertexShader, juliaFragDeep, {
                             ...deepUniforms,
-                            uJuliaCRe: this.splitDouble(this.state.juliaC.x),
-                            uJuliaCIm: this.splitDouble(this.state.juliaC.y)
+                            uJuliaCRe: this.splitDecimal(new Decimal(this.state.juliaC.x)),
+                            uJuliaCIm: this.splitDecimal(new Decimal(this.state.juliaC.y))
                         });
                     } else {
                         filter = new PIXI.Filter(vertexShader, juliaFrag, {
