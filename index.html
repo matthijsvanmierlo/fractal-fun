@@ -91,7 +91,7 @@
                             <span>Iterations / Detail</span>
                             <span id="val-iter">100</span>
                         </div>
-                        <input type="range" id="input-iter" min="10" max="100000" step="10" value="100" class="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer">
+                        <input type="range" id="input-iter" min="0" max="25000" step="10" value="100" class="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer">
                     </div>
                 </div>
 
@@ -1572,6 +1572,16 @@
 
                 document.getElementById('select-fractal').addEventListener('change', (e) => {
                     this.state.fractal = e.target.value;
+
+                    // Recenter and reset zoom
+                    this.state.zoom = 1.0;
+                    this.state.center.x = new Decimal(this.defaultState.center.x);
+                    this.state.center.y = new Decimal(this.defaultState.center.y);
+
+                    // Update UI
+                    document.getElementById('input-zoom').value = this.state.zoom;
+                    document.getElementById('val-zoom').innerText = this.state.zoom.toFixed(2);
+
                     if (this.state.fractal === 'julia') document.getElementById('julia-controls').classList.remove('hidden');
                     else document.getElementById('julia-controls').classList.add('hidden');
                     this.updateShader();
@@ -1622,6 +1632,11 @@
                     // Filter out barnsley if it was saved
                     if (parsed.fractal === 'barnsley') parsed.fractal = 'mandelbrot';
                     this.state = { ...this.state, ...parsed };
+
+                    // Clamp iterations if loaded value is too high
+                    if (this.state.iterations > 25000) {
+                        this.state.iterations = 25000;
+                    }
 
                     // Re-instantiate Decimals from strings/numbers
                     this.state.center.x = new Decimal(this.state.center.x);
